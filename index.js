@@ -9,7 +9,7 @@ const port = 4000;
 
 // CORS options
 const corsOptions = {
-  origin: "http://localhost:3000",
+  origin: "https://crm-two-pi.vercel.app",
   methods: "GET,HEAD,PUT,PATCH,POST,DELETE",
   credentials: true,
 };
