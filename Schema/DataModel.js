@@ -23,7 +23,7 @@ const entrySchema = new mongoose.Schema({
   customerName: { type: String, required: true },
   mobileNumber: {
     type: String,
-    required: true,
+
     match: [/^\d{10}$/, "Mobile number must be 10 digits"],
   },
   contactperson: { type: String },
@@ -33,8 +33,9 @@ const entrySchema = new mongoose.Schema({
   state: { type: String },
   city: { type: String },
   organization: { type: String },
-  type: { type: String, enum: ["Partner", "Direct Client"] },
-  category: { type: String, enum: ["Private", "Government"] },
+  type: { type: String, enum: ["Partner", "Direct Client"], required: false },
+  category: { type: String, enum: ["Private", "Government"], required: false },
+
   products: [productSchema],
   status: { type: String, default: "Not Found" },
   expectedClosingDate: { type: Date },
