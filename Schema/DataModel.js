@@ -33,8 +33,8 @@ const entrySchema = new mongoose.Schema({
   state: { type: String },
   city: { type: String },
   organization: { type: String },
-  type: { type: String, enum: ["Partner", "Direct Client"], required: false },
-  category: { type: String, enum: ["Private", "Government"], required: false },
+  type: { type: String },
+  category: { type: String },
 
   products: [productSchema],
   status: { type: String, default: "Not Found" },
