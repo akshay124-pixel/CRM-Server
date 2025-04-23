@@ -219,14 +219,12 @@ const editEntry = async (req, res) => {
       fourthPersonMeet,
     } = req.body;
 
-    // Validate entry ID
     if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
       return res
         .status(400)
         .json({ success: false, message: "Invalid entry ID" });
     }
 
-    // Find the entry
     const entry = await Entry.findById(req.params.id);
     if (!entry) {
       return res
@@ -234,14 +232,8 @@ const editEntry = async (req, res) => {
         .json({ success: false, message: "Entry not found" });
     }
 
-    // Validate products array
-    if (products !== undefined) {
-      if (!Array.isArray(products) || products.length === 0) {
-        return res.status(400).json({
-          success: false,
-          message: "Products must be a non-empty array",
-        });
-      }
+    // Optional Product Validation (no error thrown)
+    if (Array.isArray(products)) {
       for (const product of products) {
         if (
           !product.name ||
@@ -250,47 +242,21 @@ const editEntry = async (req, res) => {
           !product.quantity ||
           product.quantity < 1
         ) {
-          return res.status(400).json({
-            success: false,
-            message:
-              "All product fields (name, specification, size, quantity) are required and quantity must be positive",
-          });
+          console.warn("Skipping invalid product:", product);
+          continue;
         }
       }
     }
 
-    // History entry for status/remarks/products changes
     let historyEntry = {};
 
     if (status !== undefined && status !== entry.status) {
-      if (!remarks) {
-        return res.status(400).json({
-          success: false,
-          message: "Remarks are required when updating status",
-        });
-      }
-      if (!liveLocation) {
-        return res.status(400).json({
-          success: false,
-          message: "Live location is required when updating status",
-        });
-      }
-      if (!nextAction) {
-        return res.status(400).json({
-          success: false,
-          message: "Next Action is required when updating status",
-        });
-      }
-      if (!estimatedValue) {
-        return res.status(400).json({
-          success: false,
-          message: "Estimated Value is required when updating status",
-        });
-      }
       historyEntry = {
         status,
-        remarks,
-        liveLocation,
+        ...(remarks && { remarks }),
+        ...(liveLocation && { liveLocation }),
+        ...(nextAction && { nextAction }),
+        ...(estimatedValue && { estimatedValue }),
         products: products || entry.products,
         timestamp: new Date(),
       };
@@ -315,7 +281,6 @@ const editEntry = async (req, res) => {
       };
     }
 
-    // Handle person meet fields in history
     const personMeetFields = {
       firstPersonMeet,
       secondPersonMeet,
@@ -333,7 +298,6 @@ const editEntry = async (req, res) => {
       }
     }
 
-    // Update history
     if (Object.keys(historyEntry).length > 0) {
       if (entry.history.length >= 4) {
         entry.history.shift();
@@ -341,7 +305,7 @@ const editEntry = async (req, res) => {
       entry.history.push(historyEntry);
     }
 
-    // Update entry fields
+    // Update entry fields only if provided
     Object.assign(entry, {
       ...(customerName !== undefined && { customerName: customerName.trim() }),
       ...(mobileNumber !== undefined && { mobileNumber: mobileNumber.trim() }),
@@ -387,7 +351,6 @@ const editEntry = async (req, res) => {
       }),
     });
 
-    // Save the updated entry
     const updatedEntry = await entry.save();
 
     res.status(200).json({
