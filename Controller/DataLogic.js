@@ -28,26 +28,22 @@ const DataentryLogic = async (req, res) => {
 
     const numericEstimatedValue = estimatedValue ? Number(estimatedValue) : 0;
 
-    if (!products || !Array.isArray(products) || products.length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: "Products must be a non-empty array",
-      });
-    }
-
-    for (const product of products) {
-      if (
-        !product.name ||
-        !product.specification ||
-        !product.size ||
-        !product.quantity ||
-        product.quantity < 1
-      ) {
-        return res.status(400).json({
-          success: false,
-          message:
-            "All product fields (name, specification, size, quantity) are required and quantity must be positive",
-        });
+    // Validate products only if provided
+    if (products && Array.isArray(products) && products.length > 0) {
+      for (const product of products) {
+        if (
+          !product.name ||
+          !product.specification ||
+          !product.size ||
+          !product.quantity ||
+          product.quantity < 1
+        ) {
+          return res.status(400).json({
+            success: false,
+            message:
+              "All product fields (name, specification, size, quantity) are required and quantity must be positive",
+          });
+        }
       }
     }
 
@@ -56,7 +52,7 @@ const DataentryLogic = async (req, res) => {
           status: status || "Not Found",
           remarks: remarks || "Initial entry created",
           liveLocation: liveLocation || undefined,
-          products,
+          products: products || [], // Use empty array if products not provided
           timestamp: new Date(),
         }
       : undefined;
@@ -74,7 +70,7 @@ const DataentryLogic = async (req, res) => {
       organization: organization?.trim(),
       type: type?.trim(),
       category: category?.trim(),
-      products,
+      products: products || [], // Use empty array if products not provided
       status: status || "Not Found",
       expectedClosingDate: expectedClosingDate
         ? new Date(expectedClosingDate)
@@ -107,7 +103,6 @@ const DataentryLogic = async (req, res) => {
     });
   }
 };
-
 const fetchEntries = async (req, res) => {
   try {
     let entries;
