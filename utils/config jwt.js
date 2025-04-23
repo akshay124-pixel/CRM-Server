@@ -7,7 +7,7 @@ function generateToken(user) {
     email: user.email,
     role: user.role,
   };
-  return jwt.sign(payload, secretKey, { expiresIn: "1h" });
+  return jwt.sign(payload, secretKey, { expiresIn: "12h" });
 }
 
 const verifyToken = (req, res, next) => {
