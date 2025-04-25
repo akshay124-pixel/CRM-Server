@@ -39,6 +39,7 @@ const entrySchema = new mongoose.Schema({
   products: [productSchema],
   status: { type: String, default: "Not Found" },
   expectedClosingDate: { type: Date },
+  closeamount: { type: Number, min: 0 },
   followUpDate: { type: Date },
   remarks: { type: String },
   liveLocation: { type: String, required: true },

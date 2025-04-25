@@ -212,6 +212,7 @@ const editEntry = async (req, res) => {
       liveLocation,
       nextAction,
       estimatedValue,
+      closeamount,
       closetype,
       firstPersonMeet,
       secondPersonMeet,
@@ -336,6 +337,9 @@ const editEntry = async (req, res) => {
       ...(nextAction !== undefined && { nextAction: nextAction.trim() }),
       ...(estimatedValue !== undefined && {
         estimatedValue: Number(estimatedValue),
+      }),
+      ...(closeamount !== undefined && {
+        closeamount: Number(closeamount),
       }),
       ...(firstPersonMeet !== undefined && {
         firstPersonMeet: firstPersonMeet.trim(),
@@ -485,6 +489,7 @@ const bulkUploadStocks = async (req, res) => {
         estimatedValue: entry.estimatedValue
           ? Number(entry.estimatedValue)
           : undefined,
+        closeamount: entry.closeamount ? Number(entry.closeamount) : undefined,
         nextAction: entry.nextAction?.trim() || "",
       };
     });
@@ -564,6 +569,7 @@ const exportentry = async (req, res) => {
         : "Not Set",
       remarks: entry.remarks || "Not Set",
       estimatedValue: entry.estimatedValue || 0,
+      closeamount: entry.closeamount || 0,
       nextAction: entry.nextAction || "Not Set",
     }));
 
