@@ -394,116 +394,58 @@ const bulkUploadStocks = async (req, res) => {
       });
     }
 
-    const validatedEntries = newEntries.map((entry) => {
-      const requiredFields = [
-        "customerName",
-        "mobileNumber",
-        "contactperson",
-        "address",
-        "products",
-        "organization",
-        "category",
-        "state",
-        "city",
-      ];
-
-      for (const field of requiredFields) {
-        if (
-          !entry[field] ||
-          (typeof entry[field] !== "string" && field !== "products") ||
-          (typeof entry[field] === "string" && entry[field].trim() === "")
-        ) {
-          throw new Error(
-            `${field} is required and must be a non-empty string`
-          );
-        }
-      }
-
-      if (!/^\d{10}$/.test(entry.mobileNumber)) {
-        throw new Error("Mobile number must be exactly 10 digits");
-      }
-
-      if (!["Partner", "Customer"].includes(entry.type)) {
-        throw new Error("Type must be either 'Partner' or 'Customer'");
-      }
-
-      if (!["Private", "Government"].includes(entry.category)) {
-        throw new Error("Category must be either 'Private' or 'Government'");
-      }
-
-      if (
-        entry.estimatedValue &&
-        (isNaN(entry.estimatedValue) || entry.estimatedValue < 0)
-      ) {
-        throw new Error("Estimated value must be a non-negative number");
-      }
-
-      if (!Array.isArray(entry.products) || entry.products.length === 0) {
-        throw new Error("Products must be a non-empty array");
-      }
-
-      const trimmedProducts = entry.products.map((product) => ({
-        name: product.name?.trim() || "",
-        specification: product.specification?.trim() || "",
-        size: product.size?.trim() || "",
-        quantity: Number(product.quantity) || 0,
-      }));
-
-      for (const product of trimmedProducts) {
-        if (
-          !product.name ||
-          !product.specification ||
-          !product.size ||
-          !product.quantity ||
-          product.quantity < 1
-        ) {
-          throw new Error(
-            "All product fields (name, specification, size, quantity) are required and quantity must be positive"
-          );
-        }
-      }
-
-      return {
-        customerName: entry.customerName.trim(),
-        mobileNumber: entry.mobileNumber.trim(),
-        contactperson: entry.contactperson.trim(),
-        firstdate: entry.firstdate ? new Date(entry.firstdate) : undefined,
-        address: entry.address.trim(),
-        state: entry.state.trim(),
-        city: entry.city.trim(),
-        products: trimmedProducts,
-        type: entry.type.trim(),
-        organization: entry.organization.trim(),
-        category: entry.category.trim(),
-        remarks: entry.remarks?.trim() || "",
-        createdBy: req.user.id,
-        createdAt: entry.createdAt ? new Date(entry.createdAt) : new Date(),
-        status: entry.status?.trim() || "Not Found",
-        expectedClosingDate: entry.expectedClosingDate
-          ? new Date(entry.expectedClosingDate)
-          : undefined,
-        closetype: entry.closetype?.trim() || "",
-        followUpDate: entry.followUpDate
-          ? new Date(entry.followUpDate)
-          : undefined,
-        estimatedValue: entry.estimatedValue
-          ? Number(entry.estimatedValue)
-          : undefined,
-        closeamount: entry.closeamount ? Number(entry.closeamount) : undefined,
-        nextAction: entry.nextAction?.trim() || "",
-      };
-    });
+    const formattedEntries = newEntries.map((entry) => ({
+      customerName: entry.customerName?.trim() || "",
+      mobileNumber: entry.mobileNumber?.trim() || "",
+      contactperson: entry.contactperson?.trim() || "",
+      address: entry.address?.trim() || "",
+      state: entry.state?.trim() || "",
+      city: entry.city?.trim() || "",
+      organization: entry.organization?.trim() || "",
+      category: entry.category?.trim() || "",
+      type: entry.type?.trim() || "Customer",
+      products: Array.isArray(entry.products)
+        ? entry.products.map((product) => ({
+            name: product.name?.trim() || "",
+            specification: product.specification?.trim() || "",
+            size: product.size?.trim() || "",
+            quantity: Number(product.quantity) || 0,
+          }))
+        : [],
+      remarks: entry.remarks?.trim() || "",
+      status: entry.status?.trim() || "Not Found",
+      createdBy: req.user.id,
+      createdAt: entry.createdAt ? new Date(entry.createdAt) : new Date(),
+      firstdate: entry.firstdate ? new Date(entry.firstdate) : undefined,
+      expectedClosingDate: entry.expectedClosingDate
+        ? new Date(entry.expectedClosingDate)
+        : undefined,
+      followUpDate: entry.followUpDate
+        ? new Date(entry.followUpDate)
+        : undefined,
+      estimatedValue: entry.estimatedValue
+        ? Number(entry.estimatedValue)
+        : undefined,
+      closeamount: entry.closeamount ? Number(entry.closeamount) : undefined,
+      closetype: entry.closetype?.trim() || "",
+      nextAction: entry.nextAction?.trim() || "",
+      liveLocation: entry.liveLocation?.trim() || "",
+      firstPersonMeet: entry.firstPersonMeet?.trim() || "",
+      secondPersonMeet: entry.secondPersonMeet?.trim() || "",
+      thirdPersonMeet: entry.thirdPersonMeet?.trim() || "",
+      fourthPersonMeet: entry.fourthPersonMeet?.trim() || "",
+    }));
 
     const batchSize = 500;
-    for (let i = 0; i < validatedEntries.length; i += batchSize) {
-      const batch = validatedEntries.slice(i, i + batchSize);
+    for (let i = 0; i < formattedEntries.length; i += batchSize) {
+      const batch = formattedEntries.slice(i, i + batchSize);
       await Entry.insertMany(batch, { ordered: false });
     }
 
     res.status(201).json({
       success: true,
       message: "Entries uploaded successfully!",
-      count: validatedEntries.length,
+      count: formattedEntries.length,
     });
   } catch (error) {
     console.error("Error in bulk upload:", error.message);
@@ -514,66 +456,134 @@ const bulkUploadStocks = async (req, res) => {
     });
   }
 };
-
 const exportentry = async (req, res) => {
   try {
-    let entries;
+    let query = {};
+    const filters = req.query;
+
+    // Role-based data access
     if (req.user.role === "superadmin") {
-      entries = await Entry.find()
-        .populate("createdBy", "username role assignedAdmin")
-        .lean();
+      // Superadmin can access all entries
     } else if (req.user.role === "admin") {
       const teamMembers = await User.find({
         assignedAdmin: req.user.id,
       }).select("_id");
       const teamMemberIds = teamMembers.map((member) => member._id);
-      entries = await Entry.find({
+      query = {
         $or: [
           { createdBy: req.user.id },
           { createdBy: { $in: teamMemberIds } },
         ],
-      })
-        .populate("createdBy", "username role assignedAdmin")
-        .lean();
+      };
     } else {
-      entries = await Entry.find({ createdBy: req.user.id })
-        .populate("createdBy", "username role assignedAdmin")
-        .lean();
+      query = { createdBy: req.user.id };
     }
 
+    // Apply filters from query parameters
+    if (filters.customerName) {
+      query.customerName = { $regex: filters.customerName, $options: "i" };
+    }
+    if (filters.mobileNumber) {
+      query.mobileNumber = filters.mobileNumber;
+    }
+    if (filters.status) {
+      query.status = filters.status;
+    }
+    if (filters.category) {
+      query.category = filters.category;
+    }
+    if (filters.state) {
+      query.state = filters.state;
+    }
+    if (filters.city) {
+      query.city = filters.city;
+    }
+    if (filters.type) {
+      query.type = filters.type;
+    }
+    if (filters.fromDate && filters.toDate) {
+      query.createdAt = {
+        $gte: new Date(filters.fromDate),
+        $lte: new Date(filters.toDate),
+      };
+    }
+
+    const entries = await Entry.find(query)
+      .populate("createdBy", "username role assignedAdmin")
+      .lean();
+
     const formattedEntries = entries.map((entry) => ({
-      customerName: entry.customerName,
-      mobileNumber: entry.mobileNumber,
-      contactperson: entry.contactperson,
-      firstdate: entry.firstdate?.toLocaleDateString() || "Not Set",
-      address: entry.address,
-      state: entry.state,
-      city: entry.city,
-      products: entry.products
-        .map(
-          (p) => `${p.name} (${p.specification}, ${p.size}, Qty: ${p.quantity})`
-        )
-        .join("; "),
-      type: entry.type,
-      organization: entry.organization,
-      category: entry.category,
-      status: entry.status || "Not Found",
-      createdAt: entry.createdAt.toLocaleDateString(),
-      createdBy: entry.createdBy.username,
-      closetype: entry.closetype || "Not Set",
-      expectedClosingDate: entry.expectedClosingDate
+      Customer_Name: entry.customerName || "N/A",
+      Mobile_Number: entry.mobileNumber || "N/A",
+      Contact_Person: entry.contactperson || "N/A",
+      First_Date: entry.firstdate
+        ? entry.firstdate.toLocaleDateString()
+        : "Not Set",
+      Address: entry.address || "N/A",
+      State: entry.state || "N/A",
+      City: entry.city || "N/A",
+      Products:
+        entry.products
+          .map(
+            (p) =>
+              `${p.name} (${p.specification}, ${p.size}, Qty: ${p.quantity})`
+          )
+          .join("; ") || "N/A",
+      Type: entry.type || "Customer",
+      Organization: entry.organization || "N/A",
+      Category: entry.category || "N/A",
+      Status: entry.status || "Not Found",
+      Created_At: entry.createdAt.toLocaleDateString(),
+      Created_By: entry.createdBy?.username || "Unknown",
+      Close_Type: entry.closetype || "Not Set",
+      Expected_Closing_Date: entry.expectedClosingDate
         ? entry.expectedClosingDate.toLocaleDateString()
         : "Not Set",
-      followUpDate: entry.followUpDate
+      Follow_Up_Date: entry.followUpDate
         ? entry.followUpDate.toLocaleDateString()
         : "Not Set",
-      remarks: entry.remarks || "Not Set",
-      estimatedValue: entry.estimatedValue || 0,
-      closeamount: entry.closeamount || 0,
-      nextAction: entry.nextAction || "Not Set",
+      Remarks: entry.remarks || "Not Set",
+      Estimated_Value: entry.estimatedValue || 0,
+      Close_Amount: entry.closeamount || 0,
+      Next_Action: entry.nextAction || "Not Set",
+      Live_Location: entry.liveLocation || "Not Set",
+      First_Person_Met: entry.firstPersonMeet || "Not Set",
+      Second_Person_Met: entry.secondPersonMeet || "Not Set",
+      Third_Person_Met: entry.thirdPersonMeet || "Not Set",
+      Fourth_Person_Met: entry.fourthPersonMeet || "Not Set",
     }));
 
+    // Create Excel worksheet with formatting
     const ws = XLSX.utils.json_to_sheet(formattedEntries);
+    ws["!cols"] = [
+      { wch: 20 }, // Customer_Name
+      { wch: 15 }, // Mobile_Number
+      { wch: 20 }, // Contact_Person
+      { wch: 15 }, // First_Date
+      { wch: 30 }, // Address
+      { wch: 15 }, // State
+      { wch: 15 }, // City
+      { wch: 50 }, // Products
+      { wch: 15 }, // Type
+      { wch: 20 }, // Organization
+      { wch: 15 }, // Category
+      { wch: 15 }, // Status
+      { wch: 15 }, // Created_At
+      { wch: 15 }, // Created_By
+      { wch: 15 }, // Close_Type
+      { wch: 20 }, // Expected_Closing_Date
+      { wch: 20 }, // Follow_Up_Date
+      { wch: 30 }, // Remarks
+      { wch: 15 }, // Estimated_Value
+      { wch: 15 }, // Close_Amount
+      { wch: 20 }, // Next_Action
+      { wch: 20 }, // Live_Location
+      { wch: 20 }, // First_Person_Met
+      { wch: 20 }, // Second_Person_Met
+      { wch: 20 }, // Third_Person_Met
+      { wch: 20 }, // Fourth_Person_Met
+    ];
+
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Customer Entries");
 
@@ -594,7 +604,6 @@ const exportentry = async (req, res) => {
     });
   }
 };
-
 const getAdmin = async (req, res) => {
   try {
     if (!req.user || !req.user.id) {
