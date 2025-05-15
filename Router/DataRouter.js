@@ -13,8 +13,8 @@ router.get("/user-role", verifyToken, DataLogic.getAdmin);
 router.get("/users", verifyToken, DataLogic.fetchUsers);
 router.post("/assign-user", verifyToken, DataLogic.assignUser);
 router.post("/unassign-user", verifyToken, DataLogic.unassignUser);
-router.post("/check-in", verifyToken, DataLogic.checkIn);
-router.post("/check-out", verifyToken, DataLogic.checkOut);
-router.get("/attendance", verifyToken, DataLogic.fetchAttendance);
+router.post("/check-in", DataLogic.checkIn);
+router.post("/check-out", DataLogic.checkOut);
+router.get("/attendance", DataLogic.fetchAttendance);
 
 module.exports = router;
