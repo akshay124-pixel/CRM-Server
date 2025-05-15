@@ -13,7 +13,6 @@ router.get("/user-role", verifyToken, DataLogic.getAdmin);
 router.get("/users", verifyToken, DataLogic.fetchUsers);
 router.post("/assign-user", verifyToken, DataLogic.assignUser);
 router.post("/unassign-user", verifyToken, DataLogic.unassignUser);
-// New attendance routes
 router.post("/check-in", verifyToken, DataLogic.checkIn);
 router.post("/check-out", verifyToken, DataLogic.checkOut);
 router.get("/attendance", verifyToken, DataLogic.fetchAttendance);

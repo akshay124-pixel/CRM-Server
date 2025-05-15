@@ -771,10 +771,25 @@ const checkIn = async (req, res) => {
       });
     }
 
+    const { remarks, checkInLocation } = req.body;
+
+    if (
+      !checkInLocation ||
+      !checkInLocation.latitude ||
+      !checkInLocation.longitude
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Check-in location is required",
+      });
+    }
+
     const attendance = new Attendance({
       user: req.user.id,
       date: today,
       checkIn: new Date(),
+      checkInLocation,
+      remarks,
       status: "Present",
     });
 
@@ -794,6 +809,7 @@ const checkIn = async (req, res) => {
     });
   }
 };
+
 const checkOut = async (req, res) => {
   try {
     const today = new Date();
@@ -818,7 +834,22 @@ const checkOut = async (req, res) => {
       });
     }
 
+    const { remarks, checkOutLocation } = req.body;
+
+    if (
+      !checkOutLocation ||
+      !checkOutLocation.latitude ||
+      !checkOutLocation.longitude
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Check-out location is required",
+      });
+    }
+
     attendance.checkOut = new Date();
+    attendance.checkOutLocation = checkOutLocation;
+    attendance.remarks = remarks || attendance.remarks;
     attendance.status = "Present";
     await attendance.save();
 
@@ -828,6 +859,7 @@ const checkOut = async (req, res) => {
       data: attendance,
     });
   } catch (error) {
+    console.error("Check-out error:", error.message);
     res.status(500).json({
       success: false,
       message: "Failed to check out",
@@ -870,6 +902,7 @@ const fetchAttendance = async (req, res) => {
       data: attendance,
     });
   } catch (error) {
+    console.error("Fetch attendance error:", error.message);
     res.status(500).json({
       success: false,
       message: "Failed to fetch attendance",
@@ -877,7 +910,6 @@ const fetchAttendance = async (req, res) => {
     });
   }
 };
-
 module.exports = {
   bulkUploadStocks,
   DataentryLogic,
