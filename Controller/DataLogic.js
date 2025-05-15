@@ -786,6 +786,7 @@ const checkIn = async (req, res) => {
       data: attendance,
     });
   } catch (error) {
+    console.error("Check-in error:", error.message);
     res.status(500).json({
       success: false,
       message: "Failed to check in",
@@ -793,7 +794,6 @@ const checkIn = async (req, res) => {
     });
   }
 };
-
 const checkOut = async (req, res) => {
   try {
     const today = new Date();
