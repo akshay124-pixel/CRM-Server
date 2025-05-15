@@ -3,7 +3,7 @@ const mongoose = require("mongoose");
 const Entry = require("../Schema/DataModel");
 const User = require("../Schema/Model");
 const XLSX = require("xlsx");
-
+const Attendance = require("../Schema/AttendanceSchema");
 const DataentryLogic = async (req, res) => {
   try {
     const {
@@ -754,6 +754,130 @@ const unassignUser = async (req, res) => {
   }
 };
 
+const checkIn = async (req, res) => {
+  try {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const existingAttendance = await Attendance.findOne({
+      user: req.user.id,
+      date: today,
+    });
+
+    if (existingAttendance && existingAttendance.checkIn) {
+      return res.status(400).json({
+        success: false,
+        message: "Already checked in today",
+      });
+    }
+
+    const attendance = new Attendance({
+      user: req.user.id,
+      date: today,
+      checkIn: new Date(),
+      status: "Present",
+    });
+
+    await attendance.save();
+
+    res.status(201).json({
+      success: true,
+      message: "Checked in successfully",
+      data: attendance,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: "Failed to check in",
+      error: error.message,
+    });
+  }
+};
+
+const checkOut = async (req, res) => {
+  try {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const attendance = await Attendance.findOne({
+      user: req.user.id,
+      date: today,
+    });
+
+    if (!attendance || !attendance.checkIn) {
+      return res.status(400).json({
+        success: false,
+        message: "No check-in record found for today",
+      });
+    }
+
+    if (attendance.checkOut) {
+      return res.status(400).json({
+        success: false,
+        message: "Already checked out today",
+      });
+    }
+
+    attendance.checkOut = new Date();
+    attendance.status = "Present";
+    await attendance.save();
+
+    res.status(200).json({
+      success: true,
+      message: "Checked out successfully",
+      data: attendance,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: "Failed to check out",
+      error: error.message,
+    });
+  }
+};
+
+const fetchAttendance = async (req, res) => {
+  try {
+    const { startDate, endDate } = req.query;
+    let query = {};
+
+    if (req.user.role === "superadmin") {
+      // Superadmin can access all
+    } else if (req.user.role === "admin") {
+      const teamMembers = await User.find({
+        assignedAdmin: req.user.id,
+      }).select("_id");
+      const teamMemberIds = teamMembers.map((member) => member._id);
+      query.user = { $in: [req.user.id, ...teamMemberIds] };
+    } else {
+      query.user = req.user.id;
+    }
+
+    if (startDate && endDate) {
+      query.date = {
+        $gte: new Date(startDate),
+        $lte: new Date(endDate),
+      };
+    }
+
+    const attendance = await Attendance.find(query)
+      .populate("user", "username")
+      .sort({ date: -1 })
+      .lean();
+
+    res.status(200).json({
+      success: true,
+      data: attendance,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch attendance",
+      error: error.message,
+    });
+  }
+};
+
 module.exports = {
   bulkUploadStocks,
   DataentryLogic,
@@ -765,4 +889,7 @@ module.exports = {
   fetchUsers,
   assignUser,
   unassignUser,
+  checkIn,
+  checkOut,
+  fetchAttendance,
 };
