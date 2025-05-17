@@ -33,7 +33,7 @@ const attendanceSchema = new mongoose.Schema({
     longitude: { type: Number },
   },
   liveLocation: {
-    type: String, // Optional: Store a human-readable address or location name
+    type: String,
   },
 });
 

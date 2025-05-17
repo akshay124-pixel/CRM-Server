@@ -1,5 +1,6 @@
 const jwt = require("jsonwebtoken");
-const secretKey = require("../utils/config cypt");
+const secretKey = require("./config cypt");
+
 function generateToken(user) {
   const payload = {
     id: user._id,
@@ -15,14 +16,16 @@ const verifyToken = (req, res, next) => {
   if (!token) {
     return res
       .status(403)
-      .json({ message: "No token provided, access denied." });
+      .json({ success: false, message: "No token provided, access denied." });
   }
   try {
     const decoded = jwt.verify(token, secretKey);
     req.user = decoded;
     next();
   } catch (error) {
-    return res.status(401).json({ message: "Invalid or expired token." });
+    return res
+      .status(401)
+      .json({ success: false, message: "Invalid or expired token." });
   }
 };
 

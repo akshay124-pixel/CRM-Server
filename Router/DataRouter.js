@@ -1,20 +1,61 @@
 const express = require("express");
-const DataLogic = require("../Controller/DataLogic");
-const { verifyToken } = require("../utils/config jwt");
 const router = express.Router();
+const { verifyToken } = require("../utils/config jwt");
+const {
+  checkIn,
+  checkOut,
+  fetchAttendance,
+} = require("../Controller/DataLogic");
 
-router.post("/entry", verifyToken, DataLogic.DataentryLogic);
-router.get("/fetch-entry", verifyToken, DataLogic.fetchEntries);
-router.delete("/entry/:id", verifyToken, DataLogic.DeleteData);
-router.put("/editentry/:id", DataLogic.editEntry);
-router.get("/export", verifyToken, DataLogic.exportentry);
-router.post("/entries", verifyToken, DataLogic.bulkUploadStocks);
-router.get("/user-role", verifyToken, DataLogic.getAdmin);
-router.get("/users", verifyToken, DataLogic.fetchUsers);
-router.post("/assign-user", verifyToken, DataLogic.assignUser);
-router.post("/unassign-user", verifyToken, DataLogic.unassignUser);
-router.post("/check-in", DataLogic.checkIn);
-router.post("/check-out", DataLogic.checkOut);
-router.get("/attendance", DataLogic.fetchAttendance);
+router.post("/check-in", verifyToken, checkIn);
+router.post("/check-out", verifyToken, checkOut);
+router.get("/attendance", verifyToken, fetchAttendance);
+// Other routes from your original DataRoute.js
+router.post(
+  "/entry",
+  verifyToken,
+  require("../Controller/DataLogic").DataentryLogic
+);
+router.get(
+  "/fetch-entry",
+  verifyToken,
+  require("../Controller/DataLogic").fetchEntries
+);
+router.delete(
+  "/entry/:id",
+  verifyToken,
+  require("../Controller/DataLogic").DeleteData
+);
+router.put("/editentry/:id", require("../Controller/DataLogic").editEntry);
+router.get(
+  "/export",
+  verifyToken,
+  require("../Controller/DataLogic").exportentry
+);
+router.post(
+  "/entries",
+  verifyToken,
+  require("../Controller/DataLogic").bulkUploadStocks
+);
+router.get(
+  "/user-role",
+  verifyToken,
+  require("../Controller/DataLogic").getAdmin
+);
+router.get(
+  "/users",
+  verifyToken,
+  require("../Controller/DataLogic").fetchUsers
+);
+router.post(
+  "/assign-user",
+  verifyToken,
+  require("../Controller/DataLogic").assignUser
+);
+router.post(
+  "/unassign-user",
+  verifyToken,
+  require("../Controller/DataLogic").unassignUser
+);
 
 module.exports = router;

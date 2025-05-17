@@ -23,7 +23,6 @@ const entrySchema = new mongoose.Schema({
   customerName: { type: String, required: true },
   mobileNumber: {
     type: String,
-
     match: [/^\d{10}$/, "Mobile number must be 10 digits"],
   },
   contactperson: { type: String },
@@ -35,7 +34,6 @@ const entrySchema = new mongoose.Schema({
   organization: { type: String },
   type: { type: String },
   category: { type: String },
-
   products: [productSchema],
   status: { type: String, default: "Not Found" },
   expectedClosingDate: { type: Date },
@@ -59,6 +57,4 @@ const entrySchema = new mongoose.Schema({
   history: [historySchema],
 });
 
-const Entry = mongoose.model("Entry", entrySchema);
-
-module.exports = Entry;
+module.exports = mongoose.model("Entry", entrySchema);

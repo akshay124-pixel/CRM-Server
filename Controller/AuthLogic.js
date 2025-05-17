@@ -8,16 +8,20 @@ const Signup = async (req, res) => {
     const { username, email, password, role } = req.body;
 
     if (!username || !email || !password || !role) {
-      return res.status(400).json({ message: "All fields are required" });
+      return res
+        .status(400)
+        .json({ success: false, message: "All fields are required" });
     }
 
     if (!["superadmin", "admin", "others"].includes(role)) {
-      return res.status(400).json({ message: "Invalid role" });
+      return res.status(400).json({ success: false, message: "Invalid role" });
     }
 
     const existingEmailUser = await User.findOne({ email });
     if (existingEmailUser) {
-      return res.status(400).json({ message: "Email already exists" });
+      return res
+        .status(400)
+        .json({ success: false, message: "Email already exists" });
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
@@ -35,6 +39,7 @@ const Signup = async (req, res) => {
     const token = generateToken(newUser);
 
     res.status(201).json({
+      success: true,
       message: "User created successfully",
       user: {
         id: newUser._id.toString(),
@@ -49,7 +54,7 @@ const Signup = async (req, res) => {
     console.error("Signup Error:", error);
     return res
       .status(500)
-      .json({ message: "An error occurred during signup." });
+      .json({ success: false, message: "An error occurred during signup." });
   }
 };
 
@@ -58,22 +63,29 @@ const Login = async (req, res) => {
     const { email, password } = req.body;
 
     if (!email || !password) {
-      return res.status(400).json({ message: "All fields are required" });
+      return res
+        .status(400)
+        .json({ success: false, message: "All fields are required" });
     }
 
     const user = await User.findOne({ email });
     if (!user) {
-      return res.status(401).json({ message: "Invalid credentials" });
+      return res
+        .status(401)
+        .json({ success: false, message: "Invalid credentials" });
     }
 
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) {
-      return res.status(401).json({ message: "Invalid credentials" });
+      return res
+        .status(401)
+        .json({ success: false, message: "Invalid credentials" });
     }
 
     const token = generateToken(user);
 
     res.status(200).json({
+      success: true,
       message: "Login successful",
       user: {
         id: user._id.toString(),
@@ -86,7 +98,9 @@ const Login = async (req, res) => {
     });
   } catch (error) {
     console.error("Login Error:", error);
-    return res.status(500).json({ message: "An error occurred during login." });
+    return res
+      .status(500)
+      .json({ success: false, message: "An error occurred during login." });
   }
 };
 

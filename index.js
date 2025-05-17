@@ -4,6 +4,7 @@ const cors = require("cors");
 const LoginRoute = require("./Router/LoginRoute");
 const SignupRoute = require("./Router/SignupRoute");
 const DataRoute = require("./Router/DataRouter");
+const tokenRoutes = require("./Router/TokenRoute");
 const app = express();
 const port = 4000;
 
@@ -26,7 +27,7 @@ app.use(express.urlencoded({ limit: "50mb", extended: true }));
 app.use("/auth", LoginRoute);
 app.use("/user", SignupRoute);
 app.use("/api", DataRoute);
-
+app.use("/api", tokenRoutes);
 dbconnect()
   .then(() => {
     app.listen(port, () => {

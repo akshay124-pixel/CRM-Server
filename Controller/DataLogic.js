@@ -1,9 +1,9 @@
-// DataRoute.js
 const mongoose = require("mongoose");
 const Entry = require("../Schema/DataModel");
 const User = require("../Schema/Model");
 const XLSX = require("xlsx");
 const Attendance = require("../Schema/AttendanceSchema");
+
 const DataentryLogic = async (req, res) => {
   try {
     const {
@@ -28,7 +28,6 @@ const DataentryLogic = async (req, res) => {
 
     const numericEstimatedValue = estimatedValue ? Number(estimatedValue) : 0;
 
-    // Validate products only if provided
     if (products && Array.isArray(products) && products.length > 0) {
       for (const product of products) {
         if (
@@ -52,7 +51,7 @@ const DataentryLogic = async (req, res) => {
           status: status || "Not Found",
           remarks: remarks || "Initial entry created",
           liveLocation: liveLocation || undefined,
-          products: products || [], // Use empty array if products not provided
+          products: products || [],
           timestamp: new Date(),
         }
       : undefined;
@@ -70,7 +69,7 @@ const DataentryLogic = async (req, res) => {
       organization: organization?.trim(),
       type: type?.trim(),
       category: category?.trim(),
-      products: products || [], // Use empty array if products not provided
+      products: products || [],
       status: status || "Not Found",
       expectedClosingDate: expectedClosingDate
         ? new Date(expectedClosingDate)
@@ -103,6 +102,7 @@ const DataentryLogic = async (req, res) => {
     });
   }
 };
+
 const fetchEntries = async (req, res) => {
   try {
     let entries;
@@ -233,7 +233,6 @@ const editEntry = async (req, res) => {
         .json({ success: false, message: "Entry not found" });
     }
 
-    // Optional Product Validation (no error thrown)
     if (Array.isArray(products)) {
       for (const product of products) {
         if (
@@ -306,7 +305,6 @@ const editEntry = async (req, res) => {
       entry.history.push(historyEntry);
     }
 
-    // Update entry fields only if provided
     Object.assign(entry, {
       ...(customerName !== undefined && { customerName: customerName.trim() }),
       ...(mobileNumber !== undefined && { mobileNumber: mobileNumber.trim() }),
@@ -418,11 +416,9 @@ const bulkUploadStocks = async (req, res) => {
       createdAt: entry.createdAt ? new Date(entry.createdAt) : new Date(),
       firstdate: entry.firstdate ? new Date(entry.firstdate) : undefined,
       expectedClosingDate: entry.expectedClosingDate
-        ? new Date(entry.expectedClosingDate)
+        ? new Date(expectedClosingDate)
         : undefined,
-      followUpDate: entry.followUpDate
-        ? new Date(entry.followUpDate)
-        : undefined,
+      followUpDate: entry.followUpDate ? new Date(followUpDate) : undefined,
       estimatedValue: entry.estimatedValue
         ? Number(entry.estimatedValue)
         : undefined,
@@ -456,14 +452,13 @@ const bulkUploadStocks = async (req, res) => {
     });
   }
 };
+
 const exportentry = async (req, res) => {
   try {
     let query = {};
     const filters = req.query;
 
-    // Role-based data access
     if (req.user.role === "superadmin") {
-      // Superadmin can access all entries
     } else if (req.user.role === "admin") {
       const teamMembers = await User.find({
         assignedAdmin: req.user.id,
@@ -479,7 +474,6 @@ const exportentry = async (req, res) => {
       query = { createdBy: req.user.id };
     }
 
-    // Apply filters from query parameters
     if (filters.customerName) {
       query.customerName = { $regex: filters.customerName, $options: "i" };
     }
@@ -553,35 +547,34 @@ const exportentry = async (req, res) => {
       Fourth_Person_Met: entry.fourthPersonMeet || "Not Set",
     }));
 
-    // Create Excel worksheet with formatting
     const ws = XLSX.utils.json_to_sheet(formattedEntries);
     ws["!cols"] = [
-      { wch: 20 }, // Customer_Name
-      { wch: 15 }, // Mobile_Number
-      { wch: 20 }, // Contact_Person
-      { wch: 15 }, // First_Date
-      { wch: 30 }, // Address
-      { wch: 15 }, // State
-      { wch: 15 }, // City
-      { wch: 50 }, // Products
-      { wch: 15 }, // Type
-      { wch: 20 }, // Organization
-      { wch: 15 }, // Category
-      { wch: 15 }, // Status
-      { wch: 15 }, // Created_At
-      { wch: 15 }, // Created_By
-      { wch: 15 }, // Close_Type
-      { wch: 20 }, // Expected_Closing_Date
-      { wch: 20 }, // Follow_Up_Date
-      { wch: 30 }, // Remarks
-      { wch: 15 }, // Estimated_Value
-      { wch: 15 }, // Close_Amount
-      { wch: 20 }, // Next_Action
-      { wch: 20 }, // Live_Location
-      { wch: 20 }, // First_Person_Met
-      { wch: 20 }, // Second_Person_Met
-      { wch: 20 }, // Third_Person_Met
-      { wch: 20 }, // Fourth_Person_Met
+      { wch: 20 },
+      { wch: 15 },
+      { wch: 20 },
+      { wch: 15 },
+      { wch: 30 },
+      { wch: 15 },
+      { wch: 15 },
+      { wch: 50 },
+      { wch: 15 },
+      { wch: 20 },
+      { wch: 15 },
+      { wch: 15 },
+      { wch: 15 },
+      { wch: 15 },
+      { wch: 15 },
+      { wch: 20 },
+      { wch: 20 },
+      { wch: 30 },
+      { wch: 15 },
+      { wch: 15 },
+      { wch: 20 },
+      { wch: 20 },
+      { wch: 20 },
+      { wch: 20 },
+      { wch: 20 },
+      { wch: 20 },
     ];
 
     const wb = XLSX.utils.book_new();
@@ -604,6 +597,7 @@ const exportentry = async (req, res) => {
     });
   }
 };
+
 const getAdmin = async (req, res) => {
   try {
     if (!req.user || !req.user.id) {
@@ -756,12 +750,32 @@ const unassignUser = async (req, res) => {
 
 const checkIn = async (req, res) => {
   try {
+    if (!req.user || !req.user.id) {
+      return res.status(401).json({
+        success: false,
+        message: "Unauthorized: No user found",
+      });
+    }
+
+    console.log("Check-in request body:", req.body);
+
+    const user = await User.findById(req.user.id);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found in database",
+      });
+    }
+
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
     const existingAttendance = await Attendance.findOne({
       user: req.user.id,
-      date: today,
+      date: {
+        $gte: today,
+        $lt: new Date(today.getTime() + 24 * 60 * 60 * 1000),
+      },
     });
 
     if (existingAttendance && existingAttendance.checkIn) {
@@ -778,9 +792,22 @@ const checkIn = async (req, res) => {
       !checkInLocation.latitude ||
       !checkInLocation.longitude
     ) {
+      console.error("Invalid check-in location:", checkInLocation);
       return res.status(400).json({
         success: false,
-        message: "Check-in location is required",
+        message: "Check-in location with latitude and longitude is required",
+      });
+    }
+
+    // Convert coordinates to numbers
+    const latitude = Number(checkInLocation.latitude);
+    const longitude = Number(checkInLocation.longitude);
+
+    if (isNaN(latitude) || isNaN(longitude)) {
+      console.error("Non-numeric coordinates:", checkInLocation);
+      return res.status(400).json({
+        success: false,
+        message: "Latitude and longitude must be valid numbers",
       });
     }
 
@@ -788,20 +815,24 @@ const checkIn = async (req, res) => {
       user: req.user.id,
       date: today,
       checkIn: new Date(),
-      checkInLocation,
-      remarks,
+      checkInLocation: { latitude, longitude },
+      remarks: remarks?.trim() || "",
       status: "Present",
     });
 
     await attendance.save();
 
+    const populatedAttendance = await Attendance.findById(attendance._id)
+      .populate("user", "username")
+      .lean();
+
     res.status(201).json({
       success: true,
       message: "Checked in successfully",
-      data: attendance,
+      data: populatedAttendance,
     });
   } catch (error) {
-    console.error("Check-in error:", error.message);
+    console.error("Check-in error:", error.message, error.stack);
     res.status(500).json({
       success: false,
       message: "Failed to check in",
@@ -812,15 +843,39 @@ const checkIn = async (req, res) => {
 
 const checkOut = async (req, res) => {
   try {
+    if (!req.user || !req.user.id) {
+      return res.status(401).json({
+        success: false,
+        message: "Unauthorized: No user found",
+      });
+    }
+
+    console.log("Check-out request:", {
+      userId: req.user.id,
+      body: req.body,
+    });
+
+    const user = await User.findById(req.user.id);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found in database",
+      });
+    }
+
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
     const attendance = await Attendance.findOne({
       user: req.user.id,
-      date: today,
+      date: {
+        $gte: today,
+        $lt: new Date(today.getTime() + 24 * 60 * 60 * 1000),
+      },
     });
 
-    if (!attendance || !attendance.checkIn) {
+    if (!attendance) {
+      console.warn("No check-in record found for user:", req.user.id);
       return res.status(400).json({
         success: false,
         message: "No check-in record found for today",
@@ -828,6 +883,7 @@ const checkOut = async (req, res) => {
     }
 
     if (attendance.checkOut) {
+      console.warn("Already checked out for user:", req.user.id);
       return res.status(400).json({
         success: false,
         message: "Already checked out today",
@@ -838,28 +894,45 @@ const checkOut = async (req, res) => {
 
     if (
       !checkOutLocation ||
-      !checkOutLocation.latitude ||
-      !checkOutLocation.longitude
+      checkOutLocation.latitude == null ||
+      checkOutLocation.longitude == null
     ) {
+      console.error("Invalid check-out location:", checkOutLocation);
       return res.status(400).json({
         success: false,
-        message: "Check-out location is required",
+        message: "Check-out location with latitude and longitude is required",
+      });
+    }
+
+    const latitude = Number(checkOutLocation.latitude);
+    const longitude = Number(checkOutLocation.longitude);
+
+    if (isNaN(latitude) || isNaN(longitude)) {
+      console.error("Non-numeric coordinates:", checkOutLocation);
+      return res.status(400).json({
+        success: false,
+        message: "Latitude and longitude must be valid numbers",
       });
     }
 
     attendance.checkOut = new Date();
-    attendance.checkOutLocation = checkOutLocation;
-    attendance.remarks = remarks || attendance.remarks;
+    attendance.checkOutLocation = { latitude, longitude };
+    attendance.remarks = remarks?.trim() || attendance.remarks || "";
     attendance.status = "Present";
+
     await attendance.save();
+
+    const populatedAttendance = await Attendance.findById(attendance._id)
+      .populate("user", "username")
+      .lean();
 
     res.status(200).json({
       success: true,
       message: "Checked out successfully",
-      data: attendance,
+      data: populatedAttendance,
     });
   } catch (error) {
-    console.error("Check-out error:", error.message);
+    console.error("Check-out error:", error.message, error.stack);
     res.status(500).json({
       success: false,
       message: "Failed to check out",
@@ -870,11 +943,47 @@ const checkOut = async (req, res) => {
 
 const fetchAttendance = async (req, res) => {
   try {
+    if (!req.user || !req.user.id) {
+      return res.status(401).json({
+        success: false,
+        message: "Unauthorized: No user found",
+      });
+    }
+
+    const user = await User.findById(req.user.id);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found in database",
+      });
+    }
+
     const { startDate, endDate } = req.query;
     let query = {};
 
+    if (startDate && endDate) {
+      const start = new Date(startDate);
+      const end = new Date(endDate);
+
+      if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid startDate or endDate format",
+        });
+      }
+
+      if (start > end) {
+        return res.status(400).json({
+          success: false,
+          message: "startDate cannot be later than endDate",
+        });
+      }
+
+      query.date = { $gte: start, $lte: end };
+    }
+
     if (req.user.role === "superadmin") {
-      // Superadmin can access all
+      // Superadmin can access all records
     } else if (req.user.role === "admin") {
       const teamMembers = await User.find({
         assignedAdmin: req.user.id,
@@ -885,24 +994,26 @@ const fetchAttendance = async (req, res) => {
       query.user = req.user.id;
     }
 
-    if (startDate && endDate) {
-      query.date = {
-        $gte: new Date(startDate),
-        $lte: new Date(endDate),
-      };
-    }
-
     const attendance = await Attendance.find(query)
-      .populate("user", "username")
+      .populate({
+        path: "user",
+        select: "username",
+        options: { strictPopulate: false },
+      })
       .sort({ date: -1 })
       .lean();
 
+    const formattedAttendance = attendance.map((record) => ({
+      ...record,
+      user: record.user || { username: "Unknown" },
+    }));
+
     res.status(200).json({
       success: true,
-      data: attendance,
+      data: formattedAttendance,
     });
   } catch (error) {
-    console.error("Fetch attendance error:", error.message);
+    console.error("Fetch attendance error:", error.message, error.stack);
     res.status(500).json({
       success: false,
       message: "Failed to fetch attendance",
