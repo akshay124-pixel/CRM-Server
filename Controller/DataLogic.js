@@ -597,6 +597,31 @@ const exportentry = async (req, res) => {
     });
   }
 };
+const fetchAllUsers = async (req, res) => {
+  try {
+    // Ensure only superadmin can access this endpoint
+    if (req.user.role !== "superadmin") {
+      return res.status(403).json({
+        success: false,
+        message: "Unauthorized: Superadmin access required",
+      });
+    }
+
+    const users = await User.find({})
+      .select("_id username email role assignedAdmin")
+      .lean();
+
+    console.log("Fetched Users for Superadmin:", users); // Log for debugging
+    res.status(200).json(users);
+  } catch (error) {
+    console.error("Error fetching all users:", error.message);
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch users",
+      error: error.message,
+    });
+  }
+};
 
 const getAdmin = async (req, res) => {
   try {
@@ -1023,6 +1048,7 @@ const fetchAttendance = async (req, res) => {
 };
 module.exports = {
   bulkUploadStocks,
+  fetchAllUsers,
   DataentryLogic,
   fetchEntries,
   DeleteData,
