@@ -11,7 +11,7 @@ const {
 router.post("/check-in", verifyToken, checkIn);
 router.post("/check-out", verifyToken, checkOut);
 router.get("/attendance", verifyToken, fetchAttendance);
-router.get("/users", verifyToken, fetchAllUsers);
+router.get("/allusers", verifyToken, fetchAllUsers);
 // Other routes from your original DataRoute.js
 router.post(
   "/entry",
