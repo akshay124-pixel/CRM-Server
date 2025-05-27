@@ -56,6 +56,7 @@ const DataentryLogic = async (req, res) => {
         }
       : undefined;
 
+    const timestamp = new Date();
     const newEntry = new Entry({
       customerName: customerName?.trim(),
       mobileNumber: mobileNumber?.trim(),
@@ -79,6 +80,8 @@ const DataentryLogic = async (req, res) => {
       liveLocation: liveLocation?.trim(),
       createdBy: req.user.id,
       history: historyEntry ? [historyEntry] : [],
+      createdAt: timestamp,
+      updatedAt: timestamp, // Set updatedAt for new entries
     });
 
     await newEntry.save();
@@ -351,6 +354,7 @@ const editEntry = async (req, res) => {
       ...(fourthPersonMeet !== undefined && {
         fourthPersonMeet: fourthPersonMeet.trim(),
       }),
+      updatedAt: new Date(),
     });
 
     const updatedEntry = await entry.save();
@@ -983,9 +987,28 @@ const fetchAttendance = async (req, res) => {
       });
     }
 
-    const { startDate, endDate } = req.query;
+    // Extract pagination and filter parameters
+    const { page = 1, limit = 10, startDate, endDate } = req.query;
+    const pageNum = parseInt(page, 10);
+    const limitNum = parseInt(limit, 10);
+
+    // Validate pagination parameters
+    if (isNaN(pageNum) || pageNum < 1) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid page number",
+      });
+    }
+    if (isNaN(limitNum) || limitNum < 1 || limitNum > 100) {
+      return res.status(400).json({
+        success: false,
+        message: "Limit must be between 1 and 100",
+      });
+    }
+
     let query = {};
 
+    // Apply date filters if provided
     if (startDate && endDate) {
       const start = new Date(startDate);
       const end = new Date(endDate);
@@ -1007,6 +1030,7 @@ const fetchAttendance = async (req, res) => {
       query.date = { $gte: start, $lte: end };
     }
 
+    // Apply user-based filters
     if (req.user.role === "superadmin") {
       // Superadmin can access all records
     } else if (req.user.role === "admin") {
@@ -1019,6 +1043,13 @@ const fetchAttendance = async (req, res) => {
       query.user = req.user.id;
     }
 
+    // Calculate skip for pagination
+    const skip = (pageNum - 1) * limitNum;
+
+    // Fetch total records for pagination metadata
+    const totalRecords = await Attendance.countDocuments(query);
+
+    // Fetch paginated attendance records
     const attendance = await Attendance.find(query)
       .populate({
         path: "user",
@@ -1026,6 +1057,8 @@ const fetchAttendance = async (req, res) => {
         options: { strictPopulate: false },
       })
       .sort({ date: -1 })
+      .skip(skip)
+      .limit(limitNum)
       .lean();
 
     const formattedAttendance = attendance.map((record) => ({
@@ -1033,9 +1066,18 @@ const fetchAttendance = async (req, res) => {
       user: record.user || { username: "Unknown" },
     }));
 
+    // Calculate total pages
+    const totalPages = Math.ceil(totalRecords / limitNum);
+
     res.status(200).json({
       success: true,
       data: formattedAttendance,
+      pagination: {
+        currentPage: pageNum,
+        totalPages,
+        totalRecords,
+        limit: limitNum,
+      },
     });
   } catch (error) {
     console.error("Fetch attendance error:", error.message, error.stack);
