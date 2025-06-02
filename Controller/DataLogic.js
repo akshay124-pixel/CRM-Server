@@ -24,10 +24,12 @@ const DataentryLogic = async (req, res) => {
       followUpDate,
       remarks,
       liveLocation,
+      assignedTo, // Array of user IDs
     } = req.body;
 
     const numericEstimatedValue = estimatedValue ? Number(estimatedValue) : 0;
 
+    // Validate products
     if (products && Array.isArray(products) && products.length > 0) {
       for (const product of products) {
         if (
@@ -46,17 +48,38 @@ const DataentryLogic = async (req, res) => {
       }
     }
 
-    const historyEntry = status
-      ? {
-          status: status || "Not Found",
-          remarks: remarks || "Initial entry created",
-          liveLocation: liveLocation || undefined,
-          products: products || [],
-          timestamp: new Date(),
+    // Validate assignedTo if provided
+    let validatedAssignedTo = [];
+    if (assignedTo && Array.isArray(assignedTo) && assignedTo.length > 0) {
+      for (const userId of assignedTo) {
+        if (mongoose.Types.ObjectId.isValid(userId)) {
+          const user = await User.findById(userId);
+          if (!user) {
+            return res.status(400).json({
+              success: false,
+              message: `Invalid user ID in assignedTo: ${userId}`,
+            });
+          }
+          validatedAssignedTo.push(userId);
+        } else {
+          return res.status(400).json({
+            success: false,
+            message: `Invalid user ID format in assignedTo: ${userId}`,
+          });
         }
-      : undefined;
+      }
+    }
 
     const timestamp = new Date();
+    const historyEntry = {
+      status: status || "Not Found",
+      remarks: remarks || "Initial entry created",
+      liveLocation: liveLocation || undefined,
+      products: products || [],
+      assignedTo: validatedAssignedTo, // Ensure assignedTo is included
+      timestamp,
+    };
+
     const newEntry = new Entry({
       customerName: customerName?.trim(),
       mobileNumber: mobileNumber?.trim(),
@@ -79,17 +102,19 @@ const DataentryLogic = async (req, res) => {
       remarks: remarks?.trim(),
       liveLocation: liveLocation?.trim(),
       createdBy: req.user.id,
-      history: historyEntry ? [historyEntry] : [],
+      assignedTo: validatedAssignedTo, // Store validated assigned users
+      history: [historyEntry], // Include history entry with assignedTo
       createdAt: timestamp,
-      updatedAt: timestamp, // Set updatedAt for new entries
+      updatedAt: timestamp,
     });
 
     await newEntry.save();
 
-    const populatedEntry = await Entry.findById(newEntry._id).populate(
-      "createdBy",
-      "username"
-    );
+    // Populate createdBy, assignedTo, and history.assignedTo for response
+    const populatedEntry = await Entry.findById(newEntry._id)
+      .populate("createdBy", "username")
+      .populate("assignedTo", "username")
+      .populate("history.assignedTo", "username"); // Populate assignedTo in history
 
     res.status(201).json({
       success: true,
@@ -105,13 +130,13 @@ const DataentryLogic = async (req, res) => {
     });
   }
 };
-
 const fetchEntries = async (req, res) => {
   try {
     let entries;
     if (req.user.role === "superadmin") {
       entries = await Entry.find()
         .populate("createdBy", "username role assignedAdmin")
+        .populate("assignedTo", "username role assignedAdmin")
         .lean();
     } else if (req.user.role === "admin") {
       const teamMembers = await User.find({
@@ -122,13 +147,19 @@ const fetchEntries = async (req, res) => {
         $or: [
           { createdBy: req.user.id },
           { createdBy: { $in: teamMemberIds } },
+          { assignedTo: req.user.id },
+          { assignedTo: { $in: teamMemberIds } },
         ],
       })
         .populate("createdBy", "username role assignedAdmin")
+        .populate("assignedTo", "username role assignedAdmin")
         .lean();
     } else {
-      entries = await Entry.find({ createdBy: req.user.id })
+      entries = await Entry.find({
+        $or: [{ createdBy: req.user.id }, { assignedTo: req.user.id }],
+      })
         .populate("createdBy", "username role assignedAdmin")
+        .populate("assignedTo", "username role assignedAdmin")
         .lean();
     }
     res.status(200).json(entries);
@@ -141,7 +172,6 @@ const fetchEntries = async (req, res) => {
     });
   }
 };
-
 const DeleteData = async (req, res) => {
   try {
     if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
@@ -221,6 +251,7 @@ const editEntry = async (req, res) => {
       secondPersonMeet,
       thirdPersonMeet,
       fourthPersonMeet,
+      assignedTo, // Array of user IDs
     } = req.body;
 
     if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
@@ -236,43 +267,80 @@ const editEntry = async (req, res) => {
         .json({ success: false, message: "Entry not found" });
     }
 
-    if (Array.isArray(products)) {
-      for (const product of products) {
-        if (
-          !product.name ||
-          !product.specification ||
-          !product.size ||
-          !product.quantity ||
-          product.quantity < 1
-        ) {
-          console.warn("Skipping invalid product:", product);
-          continue;
+    // Validate assignedTo if provided
+    let validatedAssignedTo = [];
+    if (assignedTo && Array.isArray(assignedTo) && assignedTo.length > 0) {
+      for (const userId of assignedTo) {
+        if (mongoose.Types.ObjectId.isValid(userId)) {
+          const user = await User.findById(userId);
+          if (!user) {
+            return res.status(400).json({
+              success: false,
+              message: `Invalid user ID in assignedTo: ${userId}`,
+            });
+          }
+          validatedAssignedTo.push(userId);
+        } else {
+          return res.status(400).json({
+            success: false,
+            message: `Invalid user ID format in assignedTo: ${userId}`,
+          });
         }
       }
     }
 
-    let historyEntry = null;
+    // Check if assignedTo has changed
+    const assignedToChanged =
+      JSON.stringify(entry.assignedTo) !== JSON.stringify(validatedAssignedTo);
 
-    const statusChanged = status !== undefined && status !== entry.status;
-    const remarksChanged = remarks !== undefined && remarks !== entry.remarks;
-    const productsChanged =
-      products !== undefined &&
-      JSON.stringify(products) !== JSON.stringify(entry.products);
+    // Create history entry if relevant fields changed
+    let historyEntry = {};
 
-    if (statusChanged || remarksChanged || productsChanged) {
+    if (status !== undefined && status !== entry.status) {
       historyEntry = {
-        status: statusChanged ? status : entry.status,
-        remarks:
-          remarks || (productsChanged ? "Products updated" : entry.remarks),
-        ...(liveLocation && { liveLocation }),
-        ...(nextAction && { nextAction }),
-        ...(estimatedValue && { estimatedValue }),
+        status,
+        remarks: remarks || "Status updated",
+        liveLocation: liveLocation || entry.liveLocation,
+        nextAction: nextAction || entry.nextAction,
+        estimatedValue: estimatedValue
+          ? Number(estimatedValue)
+          : entry.estimatedValue,
         products: products || entry.products,
+        assignedTo: validatedAssignedTo, // Always include current assignedTo
+        timestamp: new Date(),
+      };
+    } else if (remarks !== undefined && remarks !== entry.remarks) {
+      historyEntry = {
+        status: entry.status,
+        remarks,
+        liveLocation: liveLocation || entry.liveLocation,
+        products: products || entry.products,
+        assignedTo: validatedAssignedTo, // Always include current assignedTo
+        timestamp: new Date(),
+      };
+    } else if (
+      products !== undefined &&
+      JSON.stringify(products) !== JSON.stringify(entry.products)
+    ) {
+      historyEntry = {
+        status: entry.status,
+        remarks: remarks || "Products updated",
+        liveLocation: liveLocation || entry.liveLocation,
+        products,
+        assignedTo: validatedAssignedTo, // Always include current assignedTo
+        timestamp: new Date(),
+      };
+    } else if (assignedTo !== undefined && assignedToChanged) {
+      historyEntry = {
+        status: entry.status,
+        remarks: remarks || "Assigned users updated",
+        liveLocation: liveLocation || entry.liveLocation,
+        products: products || entry.products,
+        assignedTo: validatedAssignedTo, // Always include current assignedTo
         timestamp: new Date(),
       };
     }
 
-    // Track changes in person meet fields
     const personMeetFields = {
       firstPersonMeet,
       secondPersonMeet,
@@ -286,26 +354,24 @@ const editEntry = async (req, res) => {
         value.trim() !== "" &&
         value !== entry[field]
       ) {
-        if (!historyEntry) {
-          historyEntry = {
-            status: entry.status,
-            timestamp: new Date(),
-            products: products || entry.products,
-          };
-        }
         historyEntry[field] = value.trim();
+        historyEntry.status = entry.status;
+        historyEntry.remarks = remarks || "Person meet updated";
+        historyEntry.liveLocation = liveLocation || entry.liveLocation;
+        historyEntry.products = products || entry.products;
+        historyEntry.assignedTo = validatedAssignedTo; // Ensure assignedTo is included
+        historyEntry.timestamp = new Date();
       }
     }
 
-    // Save history if applicable
-    if (historyEntry) {
+    if (Object.keys(historyEntry).length > 0) {
       if (entry.history.length >= 4) {
-        entry.history.shift();
+        entry.history.shift(); // Remove oldest history entry if limit reached
       }
       entry.history.push(historyEntry);
     }
 
-    // Update main entry
+    // Update entry with new values
     Object.assign(entry, {
       ...(customerName !== undefined && { customerName: customerName.trim() }),
       ...(mobileNumber !== undefined && { mobileNumber: mobileNumber.trim() }),
@@ -352,14 +418,21 @@ const editEntry = async (req, res) => {
       ...(fourthPersonMeet !== undefined && {
         fourthPersonMeet: fourthPersonMeet.trim(),
       }),
+      ...(assignedTo !== undefined && { assignedTo: validatedAssignedTo }), // Update with array
       updatedAt: new Date(),
     });
 
     const updatedEntry = await entry.save();
 
+    // Populate all relevant fields for response
+    const populatedEntry = await Entry.findById(updatedEntry._id)
+      .populate("createdBy", "username")
+      .populate("assignedTo", "username")
+      .populate("history.assignedTo", "username");
+
     res.status(200).json({
       success: true,
-      data: updatedEntry,
+      data: populatedEntry,
       message: "Entry updated successfully",
     });
   } catch (error) {
@@ -382,7 +455,6 @@ const editEntry = async (req, res) => {
     });
   }
 };
-
 const bulkUploadStocks = async (req, res) => {
   try {
     const newEntries = req.body;
@@ -656,15 +728,57 @@ const getAdmin = async (req, res) => {
   }
 };
 
+// Updated Fetch User
 const fetchUsers = async (req, res) => {
   try {
-    if (req.user.role !== "admin" && req.user.role !== "superadmin") {
-      return res.status(403).json({ success: false, message: "Unauthorized" });
+    let users;
+
+    if (req.user.role === "superadmin") {
+      // Superadmin sees all users
+      users = await User.find({})
+        .select("_id username email role assignedAdmin")
+        .lean();
+    } else if (req.user.role === "admin") {
+      // Admin sees their team and themselves
+      const teamMembers = await User.find({
+        $or: [{ assignedAdmin: req.user.id }, { _id: req.user.id }],
+      })
+        .select("_id username email role assignedAdmin")
+        .lean();
+      users = teamMembers;
+    } else {
+      // Non-admin users (e.g., "others") see only users under the same admin
+      const user = await User.findById(req.user.id).lean();
+      if (!user.assignedAdmin) {
+        // If no assigned admin, return only the user themselves
+        users = [
+          {
+            _id: user._id,
+            username: user.username,
+            email: user.email,
+            role: user.role,
+          },
+        ];
+      } else {
+        users = await User.find({
+          assignedAdmin: user.assignedAdmin,
+        })
+          .select("_id username")
+          .lean();
+        // Include the user themselves
+        users.push({
+          _id: user._id,
+          username: user.username,
+        });
+      }
     }
 
-    const users = await User.find({ role: "others" })
-      .select("username email assignedAdmin")
-      .lean();
+    if (!users || users.length === 0) {
+      return res.status(200).json([]);
+    }
+
+    // Sort users by username for consistency
+    users.sort((a, b) => a.username.localeCompare(b.username));
 
     res.status(200).json(users);
   } catch (error) {
