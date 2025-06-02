@@ -251,39 +251,28 @@ const editEntry = async (req, res) => {
       }
     }
 
-    let historyEntry = {};
+    let historyEntry = null;
 
-    if (status !== undefined && status !== entry.status) {
+    const statusChanged = status !== undefined && status !== entry.status;
+    const remarksChanged = remarks !== undefined && remarks !== entry.remarks;
+    const productsChanged =
+      products !== undefined &&
+      JSON.stringify(products) !== JSON.stringify(entry.products);
+
+    if (statusChanged || remarksChanged || productsChanged) {
       historyEntry = {
-        status,
-        ...(remarks && { remarks }),
+        status: statusChanged ? status : entry.status,
+        remarks:
+          remarks || (productsChanged ? "Products updated" : entry.remarks),
         ...(liveLocation && { liveLocation }),
         ...(nextAction && { nextAction }),
         ...(estimatedValue && { estimatedValue }),
         products: products || entry.products,
         timestamp: new Date(),
       };
-    } else if (remarks !== undefined && remarks !== entry.remarks) {
-      historyEntry = {
-        status: entry.status,
-        remarks,
-        ...(liveLocation && { liveLocation }),
-        products: products || entry.products,
-        timestamp: new Date(),
-      };
-    } else if (
-      products !== undefined &&
-      JSON.stringify(products) !== JSON.stringify(entry.products)
-    ) {
-      historyEntry = {
-        status: entry.status,
-        remarks: remarks || "Products updated",
-        ...(liveLocation && { liveLocation }),
-        products,
-        timestamp: new Date(),
-      };
     }
 
+    // Track changes in person meet fields
     const personMeetFields = {
       firstPersonMeet,
       secondPersonMeet,
@@ -297,17 +286,26 @@ const editEntry = async (req, res) => {
         value.trim() !== "" &&
         value !== entry[field]
       ) {
+        if (!historyEntry) {
+          historyEntry = {
+            status: entry.status,
+            timestamp: new Date(),
+            products: products || entry.products,
+          };
+        }
         historyEntry[field] = value.trim();
       }
     }
 
-    if (Object.keys(historyEntry).length > 0) {
+    // Save history if applicable
+    if (historyEntry) {
       if (entry.history.length >= 4) {
         entry.history.shift();
       }
       entry.history.push(historyEntry);
     }
 
+    // Update main entry
     Object.assign(entry, {
       ...(customerName !== undefined && { customerName: customerName.trim() }),
       ...(mobileNumber !== undefined && { mobileNumber: mobileNumber.trim() }),
