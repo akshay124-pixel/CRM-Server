@@ -10,7 +10,7 @@ const port = 4000;
 
 // CORS options
 const corsOptions = {
-  origin: "http://localhost:3000",
+  origin: "https://crm-server-amz7.onrender.com",
   methods: "GET,HEAD,PUT,PATCH,POST,DELETE",
   credentials: true,
 };
