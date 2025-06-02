@@ -8,7 +8,7 @@ const productSchema = new mongoose.Schema({
 });
 
 const historySchema = new mongoose.Schema({
-  status: { type: String, required: true },
+  status: { type: String },
   remarks: { type: String },
   liveLocation: { type: String },
   products: [productSchema],
