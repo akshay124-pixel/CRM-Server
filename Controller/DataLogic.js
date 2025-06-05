@@ -790,7 +790,28 @@ const fetchUsers = async (req, res) => {
     });
   }
 };
+// New endpoint for fetching all users for tagging
+const getUsersForTagging = async (req, res) => {
+  try {
+    const users = await User.find({})
+      .select("_id username")
+      .lean()
+      .sort({ username: 1 });
 
+    if (!users || users.length === 0) {
+      return res.status(200).json([]);
+    }
+
+    res.status(200).json(users);
+  } catch (error) {
+    console.error("Error fetching users for tagging:", error.message);
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch users for tagging",
+      error: error.message,
+    });
+  }
+};
 const assignUser = async (req, res) => {
   try {
     const { userId } = req.body;
@@ -1202,6 +1223,7 @@ const fetchAttendance = async (req, res) => {
 };
 module.exports = {
   bulkUploadStocks,
+  getUsersForTagging,
   fetchAllUsers,
   DataentryLogic,
   fetchEntries,

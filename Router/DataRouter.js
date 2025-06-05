@@ -45,6 +45,11 @@ router.get(
   require("../Controller/DataLogic").getAdmin
 );
 router.get(
+  "/tag-users",
+  verifyToken,
+  require("../Controller/DataLogic").getUsersForTagging
+);
+router.get(
   "/users",
   verifyToken,
   require("../Controller/DataLogic").fetchUsers
