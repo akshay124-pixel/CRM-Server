@@ -895,10 +895,17 @@ const assignUser = async (req, res) => {
     }
 
     const user = await User.findById(userId);
-    if (!user || user.role !== "others") {
+    if (!user || user.role === "superadmin") {
       return res.status(404).json({
         success: false,
-        message: "User not found or not an 'others' role",
+        message: "User not found or cannot assign a superadmin",
+      });
+    }
+
+    if (user.assignedAdmin && user.assignedAdmin.toString() !== req.user.id) {
+      return res.status(403).json({
+        success: false,
+        message: "User is already assigned to another admin",
       });
     }
 
@@ -912,6 +919,7 @@ const assignUser = async (req, res) => {
         id: user._id,
         username: user.username,
         assignedAdmin: user.assignedAdmin,
+        role: user.role,
       },
     });
   } catch (error) {
@@ -939,10 +947,10 @@ const unassignUser = async (req, res) => {
     }
 
     const user = await User.findById(userId);
-    if (!user || user.role !== "others") {
+    if (!user || user.role === "superadmin") {
       return res.status(404).json({
         success: false,
-        message: "User not found or not an 'others' role",
+        message: "User not found or cannot unassign a superadmin",
       });
     }
 
@@ -966,6 +974,7 @@ const unassignUser = async (req, res) => {
         id: user._id,
         username: user.username,
         assignedAdmin: user.assignedAdmin,
+        role: user.role,
       },
     });
   } catch (error) {
@@ -977,7 +986,6 @@ const unassignUser = async (req, res) => {
     });
   }
 };
-
 const checkIn = async (req, res) => {
   try {
     if (!req.user || !req.user.id) {
