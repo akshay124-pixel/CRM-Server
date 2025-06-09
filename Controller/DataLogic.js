@@ -915,8 +915,7 @@ const assignUser = async (req, res) => {
       });
     }
 
-    // Admins can only assign unassigned users
-    if (req.user.role === "admin" && user.assignedAdmin) {
+    if (user.assignedAdmin && user.assignedAdmin.toString() !== req.user.id) {
       return res.status(403).json({
         success: false,
         message: "User is already assigned to another admin",
@@ -926,7 +925,6 @@ const assignUser = async (req, res) => {
     user.assignedAdmin = req.user.id;
     await user.save();
 
-    const admin = await User.findById(req.user.id).select("username").lean();
     res.status(200).json({
       success: true,
       message: "User assigned successfully",
@@ -934,7 +932,6 @@ const assignUser = async (req, res) => {
         id: user._id,
         username: user.username,
         assignedAdmin: user.assignedAdmin,
-        assignedAdminUsername: admin ? admin.username : "Unknown",
         role: user.role,
       },
     });
@@ -970,7 +967,6 @@ const unassignUser = async (req, res) => {
       });
     }
 
-    // Admins can only unassign their own team members
     if (
       req.user.role === "admin" &&
       user.assignedAdmin?.toString() !== req.user.id
@@ -991,7 +987,6 @@ const unassignUser = async (req, res) => {
         id: user._id,
         username: user.username,
         assignedAdmin: user.assignedAdmin,
-        assignedAdminUsername: "Unassigned",
         role: user.role,
       },
     });
