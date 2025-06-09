@@ -739,13 +739,23 @@ const fetchUsers = async (req, res) => {
         .select("_id username email role assignedAdmin")
         .lean();
     } else if (req.user.role === "admin") {
-      // Admin sees their team and themselves
-      const teamMembers = await User.find({
-        $or: [{ assignedAdmin: req.user.id }, { _id: req.user.id }],
+      // Admin sees:
+      // 1. Their own team
+      // 2. All unassigned users
+      // 3. Users assigned to other admins
+      // Exclude unassigned admins
+      users = await User.find({
+        $or: [
+          { assignedAdmin: req.user.id }, // Their own team
+          { assignedAdmin: null, role: { $ne: "admin" } }, // Unassigned users (not admins)
+          {
+            assignedAdmin: { $ne: null, $ne: req.user.id }, // Assigned to other admins
+            role: { $ne: "admin" }, // Exclude admins
+          },
+        ],
       })
         .select("_id username email role assignedAdmin")
         .lean();
-      users = teamMembers;
     } else {
       // Non-admin users (e.g., "others") see only users under the same admin
       const user = await User.findById(req.user.id).lean();
@@ -763,12 +773,14 @@ const fetchUsers = async (req, res) => {
         users = await User.find({
           assignedAdmin: user.assignedAdmin,
         })
-          .select("_id username")
+          .select("_id username email role assignedAdmin")
           .lean();
         // Include the user themselves
         users.push({
           _id: user._id,
           username: user.username,
+          email: user.email,
+          role: user.role,
         });
       }
     }
