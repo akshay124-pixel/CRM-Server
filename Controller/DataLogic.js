@@ -804,12 +804,10 @@ const fetchTeam = async (req, res) => {
       // Admin sees:
       // 1. Their own team
       // 2. All unassigned users (including admins)
-      // 3. Users assigned to other admins (including admins)
       users = await User.find({
         $or: [
           { assignedAdmin: req.user.id }, // Their own team
-          { assignedAdmin: null }, // All unassigned users
-          { assignedAdmin: { $ne: null, $ne: req.user.id } }, // Assigned to other admins
+          { assignedAdmin: null }, // All unassigned users (including admins)
         ],
       })
         .select("_id username email role assignedAdmin")
