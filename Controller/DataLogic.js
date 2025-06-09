@@ -973,7 +973,7 @@ const unassignUser = async (req, res) => {
     // Admins can only unassign their own team members
     if (
       req.user.role === "admin" &&
-      user.assignedAdmin?.toString() !== req.user.id
+      (!user.assignedAdmin || user.assignedAdmin.toString() !== req.user.id)
     ) {
       return res.status(403).json({
         success: false,
@@ -981,6 +981,7 @@ const unassignUser = async (req, res) => {
       });
     }
 
+    // Superadmins can unassign any user (no restriction)
     user.assignedAdmin = null;
     await user.save();
 
