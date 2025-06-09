@@ -23,6 +23,11 @@ router.get(
   verifyToken,
   require("../Controller/DataLogic").fetchEntries
 );
+router.get(
+  "/fetch-team",
+  verifyToken,
+  require("../Controller/DataLogic").fetchTeam
+);
 router.delete(
   "/entry/:id",
   verifyToken,

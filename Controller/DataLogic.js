@@ -739,19 +739,77 @@ const fetchUsers = async (req, res) => {
         .select("_id username email role assignedAdmin")
         .lean();
     } else if (req.user.role === "admin") {
+      // Admin sees their team and themselves
+      const teamMembers = await User.find({
+        $or: [{ assignedAdmin: req.user.id }, { _id: req.user.id }],
+      })
+        .select("_id username email role assignedAdmin")
+        .lean();
+      users = teamMembers;
+    } else {
+      // Non-admin users (e.g., "others") see only users under the same admin
+      const user = await User.findById(req.user.id).lean();
+      if (!user.assignedAdmin) {
+        // If no assigned admin, return only the user themselves
+        users = [
+          {
+            _id: user._id,
+            username: user.username,
+            email: user.email,
+            role: user.role,
+          },
+        ];
+      } else {
+        users = await User.find({
+          assignedAdmin: user.assignedAdmin,
+        })
+          .select("_id username")
+          .lean();
+        // Include the user themselves
+        users.push({
+          _id: user._id,
+          username: user.username,
+        });
+      }
+    }
+
+    if (!users || users.length === 0) {
+      return res.status(200).json([]);
+    }
+
+    // Sort users by username for consistency
+    users.sort((a, b) => a.username.localeCompare(b.username));
+
+    res.status(200).json(users);
+  } catch (error) {
+    console.error("Error fetching users:", error.message);
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch users",
+      error: error.message,
+    });
+  }
+};
+// Team bulider Api
+const fetchTeam = async (req, res) => {
+  try {
+    let users;
+
+    if (req.user.role === "superadmin") {
+      // Superadmin sees all users
+      users = await User.find({})
+        .select("_id username email role assignedAdmin")
+        .lean();
+    } else if (req.user.role === "admin") {
       // Admin sees:
       // 1. Their own team
-      // 2. All unassigned users
-      // 3. Users assigned to other admins
-      // Exclude unassigned admins
+      // 2. All unassigned users (including admins)
+      // 3. Users assigned to other admins (including admins)
       users = await User.find({
         $or: [
           { assignedAdmin: req.user.id }, // Their own team
-          { assignedAdmin: null, role: { $ne: "admin" } }, // Unassigned users (not admins)
-          {
-            assignedAdmin: { $ne: null, $ne: req.user.id }, // Assigned to other admins
-            role: { $ne: "admin" }, // Exclude admins
-          },
+          { assignedAdmin: null }, // All unassigned users
+          { assignedAdmin: { $ne: null, $ne: req.user.id } }, // Assigned to other admins
         ],
       })
         .select("_id username email role assignedAdmin")
@@ -1248,5 +1306,6 @@ module.exports = {
   unassignUser,
   checkIn,
   checkOut,
+  fetchTeam,
   fetchAttendance,
 };
