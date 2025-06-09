@@ -685,48 +685,8 @@ const fetchAllUsers = async (req, res) => {
       .select("_id username email role assignedAdmin")
       .lean();
 
-    if (!users || users.length === 0) {
-      console.warn("No users found in database for superadmin");
-      return res.status(200).json([]);
-    }
-
-    // Normalize and validate user data
-    const normalizedUsers = users.map((user) => {
-      const normalizedUser = {
-        _id: user._id.toString(),
-        username: user.username || "Unknown",
-        email: user.email || "",
-        role:
-          typeof user.role === "string" ? user.role.toLowerCase() : "unknown",
-        assignedAdmin: user.assignedAdmin
-          ? user.assignedAdmin.toString()
-          : null,
-      };
-
-      // Log warnings for incomplete data
-      if (!user.username) {
-        console.warn(`User missing username: _id=${user._id}`);
-      }
-      if (!user.role) {
-        console.warn(`User missing role: _id=${user._id}`);
-      }
-      if (normalizedUser.role === "others" && !normalizedUser.assignedAdmin) {
-        console.warn(
-          `Team member missing assignedAdmin: _id=${user._id}, username=${normalizedUser.username}`
-        );
-      }
-
-      return normalizedUser;
-    });
-
-    // Sort users by username for consistency
-    normalizedUsers.sort((a, b) => a.username.localeCompare(b.username));
-
-    console.log(
-      "Fetched and Normalized Users for Superadmin:",
-      normalizedUsers
-    );
-    res.status(200).json(normalizedUsers);
+    console.log("Fetched Users for Superadmin:", users); // Log for debugging
+    res.status(200).json(users);
   } catch (error) {
     console.error("Error fetching all users:", error.message);
     res.status(500).json({
