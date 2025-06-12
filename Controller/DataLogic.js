@@ -459,63 +459,17 @@ const bulkUploadStocks = async (req, res) => {
   try {
     const newEntries = req.body;
 
-    if (!Array.isArray(newEntries) || newEntries.length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid data format. Array expected.",
-      });
-    }
-
-    const formattedEntries = newEntries.map((entry) => ({
-      customerName: entry.customerName?.trim() || "",
-      mobileNumber: entry.mobileNumber?.trim() || "",
-      contactperson: entry.contactperson?.trim() || "",
-      address: entry.address?.trim() || "",
-      state: entry.state?.trim() || "",
-      city: entry.city?.trim() || "",
-      organization: entry.organization?.trim() || "",
-      category: entry.category?.trim() || "",
-      type: entry.type?.trim() || "Customer",
-      products: Array.isArray(entry.products)
-        ? entry.products.map((product) => ({
-            name: product.name?.trim() || "",
-            specification: product.specification?.trim() || "",
-            size: product.size?.trim() || "",
-            quantity: Number(product.quantity) || 0,
-          }))
-        : [],
-      remarks: entry.remarks?.trim() || "",
-      status: entry.status?.trim() || "Not Found",
-      createdBy: req.user.id,
-      createdAt: entry.createdAt ? new Date(entry.createdAt) : new Date(),
-      firstdate: entry.firstdate ? new Date(entry.firstdate) : undefined,
-      expectedClosingDate: entry.expectedClosingDate
-        ? new Date(expectedClosingDate)
-        : undefined,
-      followUpDate: entry.followUpDate ? new Date(followUpDate) : undefined,
-      estimatedValue: entry.estimatedValue
-        ? Number(entry.estimatedValue)
-        : undefined,
-      closeamount: entry.closeamount ? Number(entry.closeamount) : undefined,
-      closetype: entry.closetype?.trim() || "",
-      nextAction: entry.nextAction?.trim() || "",
-      liveLocation: entry.liveLocation?.trim() || "",
-      firstPersonMeet: entry.firstPersonMeet?.trim() || "",
-      secondPersonMeet: entry.secondPersonMeet?.trim() || "",
-      thirdPersonMeet: entry.thirdPersonMeet?.trim() || "",
-      fourthPersonMeet: entry.fourthPersonMeet?.trim() || "",
-    }));
-
+    // Remove array validation
     const batchSize = 500;
-    for (let i = 0; i < formattedEntries.length; i += batchSize) {
-      const batch = formattedEntries.slice(i, i + batchSize);
+    for (let i = 0; i < newEntries.length; i += batchSize) {
+      const batch = newEntries.slice(i, i + batchSize);
       await Entry.insertMany(batch, { ordered: false });
     }
 
     res.status(201).json({
       success: true,
       message: "Entries uploaded successfully!",
-      count: formattedEntries.length,
+      count: newEntries.length,
     });
   } catch (error) {
     console.error("Error in bulk upload:", error.message);
