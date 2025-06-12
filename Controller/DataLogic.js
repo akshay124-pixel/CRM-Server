@@ -459,17 +459,23 @@ const bulkUploadStocks = async (req, res) => {
   try {
     const newEntries = req.body;
 
-    // Remove array validation
+    // Add createdBy and createdAt to each entry
+    const entriesWithMetadata = newEntries.map((entry) => ({
+      ...entry,
+      createdBy: req.user.id,
+      createdAt: entry.Created_At ? new Date(entry.Created_At) : new Date(),
+    }));
+
     const batchSize = 500;
-    for (let i = 0; i < newEntries.length; i += batchSize) {
-      const batch = newEntries.slice(i, i + batchSize);
+    for (let i = 0; i < entriesWithMetadata.length; i += batchSize) {
+      const batch = entriesWithMetadata.slice(i, i + batchSize);
       await Entry.insertMany(batch, { ordered: false });
     }
 
     res.status(201).json({
       success: true,
       message: "Entries uploaded successfully!",
-      count: newEntries.length,
+      count: entriesWithMetadata.length,
     });
   } catch (error) {
     console.error("Error in bulk upload:", error.message);
@@ -480,7 +486,6 @@ const bulkUploadStocks = async (req, res) => {
     });
   }
 };
-
 const exportentry = async (req, res) => {
   try {
     let query = {};
