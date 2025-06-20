@@ -1,9 +1,68 @@
 const mongoose = require("mongoose");
 const Entry = require("../Schema/DataModel");
 const User = require("../Schema/Model");
+const Notification = require("../Schema/NotificationSchema");
 const XLSX = require("xlsx");
 const Attendance = require("../Schema/AttendanceSchema");
+const schedule = require("node-schedule");
+// Helper function to create a notification
+// Replace the existing createNotification function with this
+const createNotification = async (userId, message, entryId = null, io) => {
+  try {
+    if (!mongoose.Types.ObjectId.isValid(userId)) {
+      console.error(`Invalid userId: ${userId}`);
+      return;
+    }
 
+    if (!io) {
+      console.error("Socket.IO instance not provided for notification");
+      return;
+    }
+
+    let validatedEntryId = null;
+    if (entryId && mongoose.Types.ObjectId.isValid(entryId)) {
+      validatedEntryId = new mongoose.Types.ObjectId(entryId);
+    } else if (entryId) {
+      console.warn(`Invalid entryId: ${entryId}`);
+    }
+
+    const notification = new Notification({
+      userId: new mongoose.Types.ObjectId(userId),
+      message,
+      entryId: validatedEntryId,
+      read: false,
+      timestamp: new Date(),
+    });
+
+    await notification.save();
+    console.log(`Notification saved for user ${userId}: ${message}`);
+
+    const notificationData = {
+      ...notification.toObject(),
+      entryId: validatedEntryId ? { _id: validatedEntryId } : null,
+    };
+
+    io.to(userId.toString()).emit("newNotification", notificationData);
+    console.log(`Notification emitted to user ${userId}: ${message}`);
+  } catch (error) {
+    console.error(
+      `Error creating notification for user ${userId}: ${error.message}`
+    );
+  }
+};
+
+// Run date notification check at midnight
+schedule.scheduleJob("0 0 * * *", () => {
+  const io = app.get("io");
+  if (io) {
+    checkDateNotifications(io);
+    console.log("Scheduled date notifications check executed");
+  } else {
+    console.error("Socket.IO instance not found for scheduled notifications");
+  }
+});
+
+// Update existing functions to use io
 const DataentryLogic = async (req, res) => {
   try {
     const {
@@ -24,10 +83,11 @@ const DataentryLogic = async (req, res) => {
       followUpDate,
       remarks,
       liveLocation,
-      assignedTo, // Array of user IDs
+      assignedTo,
     } = req.body;
 
     const numericEstimatedValue = estimatedValue ? Number(estimatedValue) : 0;
+    const io = req.app.get("io");
 
     // Validate products
     if (products && Array.isArray(products) && products.length > 0) {
@@ -76,7 +136,7 @@ const DataentryLogic = async (req, res) => {
       remarks: remarks || "Initial entry created",
       liveLocation: liveLocation || undefined,
       products: products || [],
-      assignedTo: validatedAssignedTo, // Ensure assignedTo is included
+      assignedTo: validatedAssignedTo,
       timestamp,
     };
 
@@ -102,19 +162,38 @@ const DataentryLogic = async (req, res) => {
       remarks: remarks?.trim(),
       liveLocation: liveLocation?.trim(),
       createdBy: req.user.id,
-      assignedTo: validatedAssignedTo, // Store validated assigned users
-      history: [historyEntry], // Include history entry with assignedTo
+      assignedTo: validatedAssignedTo,
+      history: [historyEntry],
       createdAt: timestamp,
       updatedAt: timestamp,
     });
 
     await newEntry.save();
 
-    // Populate createdBy, assignedTo, and history.assignedTo for response
+    // Create notification for entry creation
+    await createNotification(
+      req.user.id,
+      `New entry created: ${customerName}`,
+      newEntry._id,
+      io
+    );
+
+    // Create notifications for assigned users
+    if (validatedAssignedTo.length > 0) {
+      for (const userId of validatedAssignedTo) {
+        await createNotification(
+          userId,
+          `You have been assigned to a new entry: ${customerName}`,
+          newEntry._id,
+          io
+        );
+      }
+    }
+
     const populatedEntry = await Entry.findById(newEntry._id)
       .populate("createdBy", "username")
       .populate("assignedTo", "username")
-      .populate("history.assignedTo", "username"); // Populate assignedTo in history
+      .populate("history.assignedTo", "username");
 
     res.status(201).json({
       success: true,
@@ -130,6 +209,7 @@ const DataentryLogic = async (req, res) => {
     });
   }
 };
+
 const fetchEntries = async (req, res) => {
   try {
     let entries;
@@ -171,7 +251,77 @@ const fetchEntries = async (req, res) => {
       error: error.message,
     });
   }
+}; // Helper function to check and generate date-based notifications
+const checkDateNotifications = async (io) => {
+  try {
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    tomorrow.setHours(0, 0, 0, 0);
+    const dayAfterTomorrow = new Date(tomorrow);
+    dayAfterTomorrow.setDate(tomorrow.getDate() + 1);
+
+    const entries = await Entry.find({
+      $or: [
+        { followUpDate: { $gte: tomorrow, $lt: dayAfterTomorrow } },
+        { expectedClosingDate: { $gte: tomorrow, $lt: dayAfterTomorrow } },
+      ],
+    }).populate("assignedTo createdBy", "username");
+
+    for (const entry of entries) {
+      const messagePrefix = entry.followUpDate
+        ? `Follow-up due tomorrow for ${entry.customerName}`
+        : `Expected closing date tomorrow for ${entry.customerName}`;
+      const message = `${messagePrefix} (Entry ID: ${entry._id})`;
+
+      // Notify creator
+      if (entry.createdBy) {
+        await createNotification(entry.createdBy._id, message, entry._id, io);
+      }
+
+      // Notify assigned users
+      if (entry.assignedTo && Array.isArray(entry.assignedTo)) {
+        for (const user of entry.assignedTo) {
+          await createNotification(user._id, message, entry._id, io);
+        }
+      }
+    }
+  } catch (error) {
+    console.error("Error in date-based notifications:", error.message);
+  }
 };
+
+// Run date notification check periodically
+setInterval(() => checkDateNotifications(app.get("io")), 24 * 60 * 60 * 1000);
+
+// New endpoint to clear all notifications
+const clearNotifications = async (req, res) => {
+  try {
+    if (!req.user || !req.user.id) {
+      return res.status(401).json({
+        success: false,
+        message: "Unauthorized: No user found",
+      });
+    }
+
+    await Notification.deleteMany({ userId: req.user.id });
+
+    const io = req.app.get("io");
+    io.to(req.user.id).emit("notificationsCleared");
+
+    res.status(200).json({
+      success: true,
+      message: "All notifications cleared successfully",
+    });
+  } catch (error) {
+    console.error("Error clearing notifications:", error.message);
+    res.status(500).json({
+      success: false,
+      message: "Failed to clear notifications",
+      error: error.message,
+    });
+  }
+};
+// Update existing endpoints to include io
 const DeleteData = async (req, res) => {
   try {
     if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
@@ -186,6 +336,8 @@ const DeleteData = async (req, res) => {
         .status(404)
         .json({ success: false, message: "Entry not found" });
     }
+
+    const io = req.app.get("io");
 
     if (req.user.role === "superadmin") {
       // Superadmin can delete any entry
@@ -210,6 +362,26 @@ const DeleteData = async (req, res) => {
       }
     }
 
+    // Create notification for deletion
+    await createNotification(
+      req.user.id,
+      `Entry deleted: ${entry.customerName}`,
+      entry._id,
+      io
+    );
+
+    // Notify assigned users
+    if (entry.assignedTo && Array.isArray(entry.assignedTo)) {
+      for (const userId of entry.assignedTo) {
+        await createNotification(
+          userId,
+          `Entry you were assigned to was deleted: ${entry.customerName}`,
+          entry._id,
+          io
+        );
+      }
+    }
+
     await Entry.findByIdAndDelete(req.params.id);
     res
       .status(200)
@@ -223,7 +395,6 @@ const DeleteData = async (req, res) => {
     });
   }
 };
-
 const editEntry = async (req, res) => {
   try {
     const {
@@ -251,7 +422,7 @@ const editEntry = async (req, res) => {
       secondPersonMeet,
       thirdPersonMeet,
       fourthPersonMeet,
-      assignedTo, // Array of user IDs
+      assignedTo,
     } = req.body;
 
     if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
@@ -266,6 +437,8 @@ const editEntry = async (req, res) => {
         .status(404)
         .json({ success: false, message: "Entry not found" });
     }
+
+    const io = req.app.get("io");
 
     // Validate assignedTo if provided
     let validatedAssignedTo = [];
@@ -306,7 +479,7 @@ const editEntry = async (req, res) => {
           ? Number(estimatedValue)
           : entry.estimatedValue,
         products: products || entry.products,
-        assignedTo: validatedAssignedTo, // Always include current assignedTo
+        assignedTo: validatedAssignedTo,
         timestamp: new Date(),
       };
     } else if (remarks !== undefined && remarks !== entry.remarks) {
@@ -315,7 +488,7 @@ const editEntry = async (req, res) => {
         remarks,
         liveLocation: liveLocation || entry.liveLocation,
         products: products || entry.products,
-        assignedTo: validatedAssignedTo, // Always include current assignedTo
+        assignedTo: validatedAssignedTo,
         timestamp: new Date(),
       };
     } else if (
@@ -327,7 +500,7 @@ const editEntry = async (req, res) => {
         remarks: remarks || "Products updated",
         liveLocation: liveLocation || entry.liveLocation,
         products,
-        assignedTo: validatedAssignedTo, // Always include current assignedTo
+        assignedTo: validatedAssignedTo,
         timestamp: new Date(),
       };
     } else if (assignedTo !== undefined && assignedToChanged) {
@@ -336,7 +509,7 @@ const editEntry = async (req, res) => {
         remarks: remarks || "Assigned users updated",
         liveLocation: liveLocation || entry.liveLocation,
         products: products || entry.products,
-        assignedTo: validatedAssignedTo, // Always include current assignedTo
+        assignedTo: validatedAssignedTo,
         timestamp: new Date(),
       };
     }
@@ -359,19 +532,55 @@ const editEntry = async (req, res) => {
         historyEntry.remarks = remarks || "Person meet updated";
         historyEntry.liveLocation = liveLocation || entry.liveLocation;
         historyEntry.products = products || entry.products;
-        historyEntry.assignedTo = validatedAssignedTo; // Ensure assignedTo is included
+        historyEntry.assignedTo = validatedAssignedTo;
         historyEntry.timestamp = new Date();
       }
     }
 
     if (Object.keys(historyEntry).length > 0) {
       if (entry.history.length >= 4) {
-        entry.history.shift(); // Remove oldest history entry if limit reached
+        entry.history.shift();
       }
       entry.history.push(historyEntry);
+
+      // Create notification for update
+      await createNotification(
+        req.user.id,
+        `Entry updated: ${customerName || entry.customerName}`,
+        entry._id,
+        io
+      );
+
+      // Notify assigned users if changed
+      if (assignedToChanged) {
+        for (const userId of validatedAssignedTo) {
+          if (!entry.assignedTo.includes(userId)) {
+            await createNotification(
+              userId,
+              `You have been assigned to an updated entry: ${
+                customerName || entry.customerName
+              }`,
+              entry._id,
+              io
+            );
+          }
+        }
+        // Notify users who were unassigned
+        for (const userId of entry.assignedTo) {
+          if (!validatedAssignedTo.includes(userId)) {
+            await createNotification(
+              userId,
+              `You have been unassigned from entry: ${
+                customerName || entry.customerName
+              }`,
+              entry._id,
+              io
+            );
+          }
+        }
+      }
     }
 
-    // Update entry with new values
     Object.assign(entry, {
       ...(customerName !== undefined && { customerName: customerName.trim() }),
       ...(mobileNumber !== undefined && { mobileNumber: mobileNumber.trim() }),
@@ -418,13 +627,12 @@ const editEntry = async (req, res) => {
       ...(fourthPersonMeet !== undefined && {
         fourthPersonMeet: fourthPersonMeet.trim(),
       }),
-      ...(assignedTo !== undefined && { assignedTo: validatedAssignedTo }), // Update with array
+      ...(assignedTo !== undefined && { assignedTo: validatedAssignedTo }),
       updatedAt: new Date(),
     });
 
     const updatedEntry = await entry.save();
 
-    // Populate all relevant fields for response
     const populatedEntry = await Entry.findById(updatedEntry._id)
       .populate("createdBy", "username")
       .populate("assignedTo", "username")
@@ -459,17 +667,44 @@ const bulkUploadStocks = async (req, res) => {
   try {
     const newEntries = req.body;
 
-    // Add createdBy and createdAt to each entry
     const entriesWithMetadata = newEntries.map((entry) => ({
       ...entry,
       createdBy: req.user.id,
       createdAt: entry.Created_At ? new Date(entry.Created_At) : new Date(),
+      history: [
+        {
+          status: entry.Status || "Not Found",
+          remarks: entry.Remarks || "Bulk upload entry",
+          liveLocation: entry.Live_Location || undefined,
+          products: entry.Products ? JSON.parse(entry.Products) : [],
+          assignedTo: entry.Assigned_To ? [entry.Assigned_To] : [],
+          timestamp: new Date(),
+        },
+      ],
     }));
 
     const batchSize = 500;
     for (let i = 0; i < entriesWithMetadata.length; i += batchSize) {
       const batch = entriesWithMetadata.slice(i, i + batchSize);
-      await Entry.insertMany(batch, { ordered: false });
+      const insertedEntries = await Entry.insertMany(batch, { ordered: false });
+
+      // Create notifications for each inserted entry
+      for (const entry of insertedEntries) {
+        await createNotification(
+          req.user.id,
+          `Bulk entry created: ${entry.customerName}`,
+          entry._id
+        );
+        if (entry.assignedTo && Array.isArray(entry.assignedTo)) {
+          for (const userId of entry.assignedTo) {
+            await createNotification(
+              userId,
+              `Assigned to bulk entry: ${entry.customerName}`,
+              entry._id
+            );
+          }
+        }
+      }
     }
 
     res.status(201).json({
@@ -486,6 +721,7 @@ const bulkUploadStocks = async (req, res) => {
     });
   }
 };
+
 const exportentry = async (req, res) => {
   try {
     let query = {};
@@ -630,9 +866,9 @@ const exportentry = async (req, res) => {
     });
   }
 };
+
 const fetchAllUsers = async (req, res) => {
   try {
-    // Ensure only superadmin can access this endpoint
     if (req.user.role !== "superadmin") {
       return res.status(403).json({
         success: false,
@@ -644,7 +880,7 @@ const fetchAllUsers = async (req, res) => {
       .select("_id username email role assignedAdmin")
       .lean();
 
-    console.log("Fetched Users for Superadmin:", users); // Log for debugging
+    console.log("Fetched Users for Superadmin:", users);
     res.status(200).json(users);
   } catch (error) {
     console.error("Error fetching all users:", error.message);
@@ -687,18 +923,15 @@ const getAdmin = async (req, res) => {
   }
 };
 
-// Updated Fetch User
 const fetchUsers = async (req, res) => {
   try {
     let users;
 
     if (req.user.role === "superadmin") {
-      // Superadmin sees all users
       users = await User.find({})
         .select("_id username email role assignedAdmin")
         .lean();
     } else if (req.user.role === "admin") {
-      // Admin sees their team and themselves
       const teamMembers = await User.find({
         $or: [{ assignedAdmin: req.user.id }, { _id: req.user.id }],
       })
@@ -706,10 +939,8 @@ const fetchUsers = async (req, res) => {
         .lean();
       users = teamMembers;
     } else {
-      // Non-admin users (e.g., "others") see only users under the same admin
       const user = await User.findById(req.user.id).lean();
       if (!user.assignedAdmin) {
-        // If no assigned admin, return only the user themselves
         users = [
           {
             _id: user._id,
@@ -724,7 +955,6 @@ const fetchUsers = async (req, res) => {
         })
           .select("_id username")
           .lean();
-        // Include the user themselves
         users.push({
           _id: user._id,
           username: user.username,
@@ -736,7 +966,6 @@ const fetchUsers = async (req, res) => {
       return res.status(200).json([]);
     }
 
-    // Sort users by username for consistency
     users.sort((a, b) => a.username.localeCompare(b.username));
 
     res.status(200).json(users);
@@ -749,7 +978,7 @@ const fetchUsers = async (req, res) => {
     });
   }
 };
-// Team bulider Api
+
 const fetchTeam = async (req, res) => {
   try {
     let users;
@@ -797,7 +1026,6 @@ const fetchTeam = async (req, res) => {
       return res.status(200).json([]);
     }
 
-    // Fetch all admin usernames in one query
     const adminIds = [
       ...new Set(
         users.filter((u) => u.assignedAdmin).map((u) => u.assignedAdmin)
@@ -808,7 +1036,6 @@ const fetchTeam = async (req, res) => {
       .lean();
     const adminMap = new Map(admins.map((a) => [a._id.toString(), a.username]));
 
-    // Populate assignedAdminUsername
     for (let user of users) {
       user.assignedAdminUsername = user.assignedAdmin
         ? adminMap.get(user.assignedAdmin.toString()) || "Unknown"
@@ -827,7 +1054,7 @@ const fetchTeam = async (req, res) => {
     });
   }
 };
-// New endpoint for fetching all users for tagging
+
 const getUsersForTagging = async (req, res) => {
   try {
     const users = await User.find({})
@@ -849,6 +1076,7 @@ const getUsersForTagging = async (req, res) => {
     });
   }
 };
+
 const assignUser = async (req, res) => {
   try {
     const { userId } = req.body;
@@ -871,7 +1099,6 @@ const assignUser = async (req, res) => {
       });
     }
 
-    // Admins can only assign unassigned users
     if (req.user.role === "admin" && user.assignedAdmin) {
       return res.status(403).json({
         success: false,
@@ -879,7 +1106,6 @@ const assignUser = async (req, res) => {
       });
     }
 
-    // If assigning an admin, reassign their entire team
     if (user.role === "admin") {
       await User.updateMany(
         { assignedAdmin: user._id },
@@ -889,6 +1115,13 @@ const assignUser = async (req, res) => {
 
     user.assignedAdmin = req.user.id;
     await user.save();
+
+    // Create notification for assignment
+    await createNotification(
+      userId,
+      `You have been assigned to admin ${req.user.username}`,
+      null
+    );
 
     const admin = await User.findById(req.user.id).select("username").lean();
     res.status(200).json({
@@ -911,6 +1144,7 @@ const assignUser = async (req, res) => {
     });
   }
 };
+
 const unassignUser = async (req, res) => {
   try {
     const { userId } = req.body;
@@ -933,7 +1167,6 @@ const unassignUser = async (req, res) => {
       });
     }
 
-    // Admins can only unassign their own team members
     if (
       req.user.role === "admin" &&
       (!user.assignedAdmin || user.assignedAdmin.toString() !== req.user.id)
@@ -946,6 +1179,13 @@ const unassignUser = async (req, res) => {
 
     user.assignedAdmin = null;
     await user.save();
+
+    // Create notification for unassignment
+    await createNotification(
+      userId,
+      `You have been unassigned from your admin`,
+      null
+    );
 
     res.status(200).json({
       success: true,
@@ -967,6 +1207,7 @@ const unassignUser = async (req, res) => {
     });
   }
 };
+
 const checkIn = async (req, res) => {
   try {
     if (!req.user || !req.user.id) {
@@ -975,8 +1216,6 @@ const checkIn = async (req, res) => {
         message: "Unauthorized: No user found",
       });
     }
-
-    console.log("Check-in request body:", req.body);
 
     const user = await User.findById(req.user.id);
     if (!user) {
@@ -1018,7 +1257,6 @@ const checkIn = async (req, res) => {
       });
     }
 
-    // Convert coordinates to numbers
     const latitude = Number(checkInLocation.latitude);
     const longitude = Number(checkInLocation.longitude);
 
@@ -1040,6 +1278,13 @@ const checkIn = async (req, res) => {
     });
 
     await attendance.save();
+
+    // Create notification for check-in
+    await createNotification(
+      req.user.id,
+      `You checked in at ${new Date().toLocaleTimeString()}`,
+      null
+    );
 
     const populatedAttendance = await Attendance.findById(attendance._id)
       .populate("user", "username")
@@ -1068,11 +1313,6 @@ const checkOut = async (req, res) => {
         message: "Unauthorized: No user found",
       });
     }
-
-    console.log("Check-out request:", {
-      userId: req.user.id,
-      body: req.body,
-    });
 
     const user = await User.findById(req.user.id);
     if (!user) {
@@ -1141,6 +1381,13 @@ const checkOut = async (req, res) => {
 
     await attendance.save();
 
+    // Create notification for check-out
+    await createNotification(
+      req.user.id,
+      `You checked out at ${new Date().toLocaleTimeString()}`,
+      null
+    );
+
     const populatedAttendance = await Attendance.findById(attendance._id)
       .populate("user", "username")
       .lean();
@@ -1177,12 +1424,10 @@ const fetchAttendance = async (req, res) => {
       });
     }
 
-    // Extract pagination and filter parameters
     const { page = 1, limit = 10, startDate, endDate } = req.query;
     const pageNum = parseInt(page, 10);
     const limitNum = parseInt(limit, 10);
 
-    // Validate pagination parameters
     if (isNaN(pageNum) || pageNum < 1) {
       return res.status(400).json({
         success: false,
@@ -1198,7 +1443,6 @@ const fetchAttendance = async (req, res) => {
 
     let query = {};
 
-    // Apply date filters if provided
     if (startDate && endDate) {
       const start = new Date(startDate);
       const end = new Date(endDate);
@@ -1220,9 +1464,7 @@ const fetchAttendance = async (req, res) => {
       query.date = { $gte: start, $lte: end };
     }
 
-    // Apply user-based filters
     if (req.user.role === "superadmin") {
-      // Superadmin can access all records
     } else if (req.user.role === "admin") {
       const teamMembers = await User.find({
         assignedAdmin: req.user.id,
@@ -1233,13 +1475,10 @@ const fetchAttendance = async (req, res) => {
       query.user = req.user.id;
     }
 
-    // Calculate skip for pagination
     const skip = (pageNum - 1) * limitNum;
 
-    // Fetch total records for pagination metadata
     const totalRecords = await Attendance.countDocuments(query);
 
-    // Fetch paginated attendance records
     const attendance = await Attendance.find(query)
       .populate({
         path: "user",
@@ -1256,7 +1495,6 @@ const fetchAttendance = async (req, res) => {
       user: record.user || { username: "Unknown" },
     }));
 
-    // Calculate total pages
     const totalPages = Math.ceil(totalRecords / limitNum);
 
     res.status(200).json({
@@ -1278,6 +1516,120 @@ const fetchAttendance = async (req, res) => {
     });
   }
 };
+
+// New endpoint to fetch notifications
+const fetchNotifications = async (req, res) => {
+  try {
+    if (!req.user || !req.user.id) {
+      return res.status(401).json({
+        success: false,
+        message: "Unauthorized: No user found",
+      });
+    }
+
+    const { page = 1, limit = 10, readStatus } = req.query;
+    const pageNum = parseInt(page, 10);
+    const limitNum = parseInt(limit, 10);
+
+    if (isNaN(pageNum) || pageNum < 1) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid page number",
+      });
+    }
+    if (isNaN(limitNum) || limitNum < 1 || limitNum > 100) {
+      return res.status(400).json({
+        success: false,
+        message: "Limit must be between 1 and 100",
+      });
+    }
+
+    let query = { userId: req.user.id };
+    if (readStatus === "read") {
+      query.read = true;
+    } else if (readStatus === "unread") {
+      query.read = false;
+    }
+
+    const skip = (pageNum - 1) * limitNum;
+    const totalRecords = await Notification.countDocuments(query);
+
+    const notifications = await Notification.find(query)
+      .populate("entryId", "customerName")
+      .sort({ timestamp: -1 })
+      .skip(skip)
+      .limit(limitNum)
+      .lean();
+
+    const totalPages = Math.ceil(totalRecords / limitNum);
+
+    res.status(200).json({
+      success: true,
+      data: notifications,
+      pagination: {
+        currentPage: pageNum,
+        totalPages,
+        totalRecords,
+        limit: limitNum,
+      },
+    });
+  } catch (error) {
+    console.error("Error fetching notifications:", error.message);
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch notifications",
+      error: error.message,
+    });
+  }
+};
+
+// New endpoint to mark notifications as read
+const markNotificationsRead = async (req, res) => {
+  try {
+    if (!req.user || !req.user.id) {
+      return res.status(401).json({
+        success: false,
+        message: "Unauthorized: No user found",
+      });
+    }
+
+    const { notificationIds } = req.body;
+
+    if (!Array.isArray(notificationIds) || notificationIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Notification IDs must be provided as a non-empty array",
+      });
+    }
+
+    for (const id of notificationIds) {
+      if (!mongoose.Types.ObjectId.isValid(id)) {
+        return res.status(400).json({
+          success: false,
+          message: `Invalid notification ID: ${id}`,
+        });
+      }
+    }
+
+    await Notification.updateMany(
+      { _id: { $in: notificationIds }, userId: req.user.id },
+      { read: true }
+    );
+
+    res.status(200).json({
+      success: true,
+      message: "Notifications marked as read successfully",
+    });
+  } catch (error) {
+    console.error("Error marking notifications as read:", error.message);
+    res.status(500).json({
+      success: false,
+      message: "Failed to mark notifications as read",
+      error: error.message,
+    });
+  }
+};
+
 module.exports = {
   bulkUploadStocks,
   getUsersForTagging,
@@ -1295,4 +1647,7 @@ module.exports = {
   checkOut,
   fetchTeam,
   fetchAttendance,
+  fetchNotifications,
+  markNotificationsRead,
+  clearNotifications,
 };

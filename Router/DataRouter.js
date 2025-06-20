@@ -6,13 +6,16 @@ const {
   checkOut,
   fetchAttendance,
   fetchAllUsers,
+  fetchNotifications,
+  markNotificationsRead,
+  clearNotifications,
 } = require("../Controller/DataLogic");
 
 router.post("/check-in", verifyToken, checkIn);
 router.post("/check-out", verifyToken, checkOut);
 router.get("/attendance", verifyToken, fetchAttendance);
 router.get("/allusers", verifyToken, fetchAllUsers);
-// Other routes from your original DataRoute.js
+
 router.post(
   "/entry",
   verifyToken,
@@ -69,5 +72,8 @@ router.post(
   verifyToken,
   require("../Controller/DataLogic").unassignUser
 );
+router.get("/notifications", verifyToken, fetchNotifications);
+router.post("/notificationsread", verifyToken, markNotificationsRead);
+router.delete("/notificationsdelete", verifyToken, clearNotifications);
 
 module.exports = router;
