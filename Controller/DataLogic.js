@@ -422,7 +422,7 @@ const editEntry = async (req, res) => {
       secondPersonMeet,
       thirdPersonMeet,
       fourthPersonMeet,
-      assignedTo, // Array of user IDs
+      assignedTo,
     } = req.body;
 
     if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
@@ -437,6 +437,8 @@ const editEntry = async (req, res) => {
         .status(404)
         .json({ success: false, message: "Entry not found" });
     }
+
+    const io = req.app.get("io");
 
     // Validate assignedTo if provided
     let validatedAssignedTo = [];
@@ -477,7 +479,7 @@ const editEntry = async (req, res) => {
           ? Number(estimatedValue)
           : entry.estimatedValue,
         products: products || entry.products,
-        assignedTo: validatedAssignedTo, // Always include current assignedTo
+        assignedTo: validatedAssignedTo,
         timestamp: new Date(),
       };
     } else if (remarks !== undefined && remarks !== entry.remarks) {
@@ -486,7 +488,7 @@ const editEntry = async (req, res) => {
         remarks,
         liveLocation: liveLocation || entry.liveLocation,
         products: products || entry.products,
-        assignedTo: validatedAssignedTo, // Always include current assignedTo
+        assignedTo: validatedAssignedTo,
         timestamp: new Date(),
       };
     } else if (
@@ -498,7 +500,7 @@ const editEntry = async (req, res) => {
         remarks: remarks || "Products updated",
         liveLocation: liveLocation || entry.liveLocation,
         products,
-        assignedTo: validatedAssignedTo, // Always include current assignedTo
+        assignedTo: validatedAssignedTo,
         timestamp: new Date(),
       };
     } else if (assignedTo !== undefined && assignedToChanged) {
@@ -507,7 +509,7 @@ const editEntry = async (req, res) => {
         remarks: remarks || "Assigned users updated",
         liveLocation: liveLocation || entry.liveLocation,
         products: products || entry.products,
-        assignedTo: validatedAssignedTo, // Always include current assignedTo
+        assignedTo: validatedAssignedTo,
         timestamp: new Date(),
       };
     }
@@ -530,55 +532,55 @@ const editEntry = async (req, res) => {
         historyEntry.remarks = remarks || "Person meet updated";
         historyEntry.liveLocation = liveLocation || entry.liveLocation;
         historyEntry.products = products || entry.products;
-        historyEntry.assignedTo = validatedAssignedTo; // Ensure assignedTo is included
+        historyEntry.assignedTo = validatedAssignedTo;
         historyEntry.timestamp = new Date();
       }
     }
 
     if (Object.keys(historyEntry).length > 0) {
       if (entry.history.length >= 4) {
-        entry.history.shift(); // Remove oldest history entry if limit reached
+        entry.history.shift();
       }
       entry.history.push(historyEntry);
-    }
-    // Create notification for update
-    await createNotification(
-      req.user.id,
-      `Entry updated: ${customerName || entry.customerName}`,
-      entry._id,
-      io
-    );
 
-    // Notify assigned users if changed
-    if (assignedToChanged) {
-      for (const userId of validatedAssignedTo) {
-        if (!entry.assignedTo.includes(userId)) {
-          await createNotification(
-            userId,
-            `You have been assigned to an updated entry: ${
-              customerName || entry.customerName
-            }`,
-            entry._id,
-            io
-          );
+      // Create notification for update
+      await createNotification(
+        req.user.id,
+        `Entry updated: ${customerName || entry.customerName}`,
+        entry._id,
+        io
+      );
+
+      // Notify assigned users if changed
+      if (assignedToChanged) {
+        for (const userId of validatedAssignedTo) {
+          if (!entry.assignedTo.includes(userId)) {
+            await createNotification(
+              userId,
+              `You have been assigned to an updated entry: ${
+                customerName || entry.customerName
+              }`,
+              entry._id,
+              io
+            );
+          }
+        }
+        // Notify users who were unassigned
+        for (const userId of entry.assignedTo) {
+          if (!validatedAssignedTo.includes(userId)) {
+            await createNotification(
+              userId,
+              `You have been unassigned from entry: ${
+                customerName || entry.customerName
+              }`,
+              entry._id,
+              io
+            );
+          }
         }
       }
-      // Notify users who were unassigned
-      for (const userId of entry.assignedTo) {
-        if (!validatedAssignedTo.includes(userId)) {
-          await createNotification(
-            userId,
-            `You have been unassigned from entry: ${
-              customerName || entry.customerName
-            }`,
-            entry._id,
-            io
-          );
-        }
-      }
     }
 
-    // Update entry with new values
     Object.assign(entry, {
       ...(customerName !== undefined && { customerName: customerName.trim() }),
       ...(mobileNumber !== undefined && { mobileNumber: mobileNumber.trim() }),
@@ -625,13 +627,12 @@ const editEntry = async (req, res) => {
       ...(fourthPersonMeet !== undefined && {
         fourthPersonMeet: fourthPersonMeet.trim(),
       }),
-      ...(assignedTo !== undefined && { assignedTo: validatedAssignedTo }), // Update with array
+      ...(assignedTo !== undefined && { assignedTo: validatedAssignedTo }),
       updatedAt: new Date(),
     });
 
     const updatedEntry = await entry.save();
 
-    // Populate all relevant fields for response
     const populatedEntry = await Entry.findById(updatedEntry._id)
       .populate("createdBy", "username")
       .populate("assignedTo", "username")
@@ -662,6 +663,65 @@ const editEntry = async (req, res) => {
     });
   }
 };
+const bulkUploadStocks = async (req, res) => {
+  try {
+    const newEntries = req.body;
+
+    const entriesWithMetadata = newEntries.map((entry) => ({
+      ...entry,
+      createdBy: req.user.id,
+      createdAt: entry.Created_At ? new Date(entry.Created_At) : new Date(),
+      history: [
+        {
+          status: entry.Status || "Not Found",
+          remarks: entry.Remarks || "Bulk upload entry",
+          liveLocation: entry.Live_Location || undefined,
+          products: entry.Products ? JSON.parse(entry.Products) : [],
+          assignedTo: entry.Assigned_To ? [entry.Assigned_To] : [],
+          timestamp: new Date(),
+        },
+      ],
+    }));
+
+    const batchSize = 500;
+    for (let i = 0; i < entriesWithMetadata.length; i += batchSize) {
+      const batch = entriesWithMetadata.slice(i, i + batchSize);
+      const insertedEntries = await Entry.insertMany(batch, { ordered: false });
+
+      // Create notifications for each inserted entry
+      for (const entry of insertedEntries) {
+        await createNotification(
+          req.user.id,
+          `Bulk entry created: ${entry.customerName}`,
+          entry._id
+        );
+        if (entry.assignedTo && Array.isArray(entry.assignedTo)) {
+          for (const userId of entry.assignedTo) {
+            await createNotification(
+              userId,
+              `Assigned to bulk entry: ${entry.customerName}`,
+              entry._id
+            );
+          }
+        }
+      }
+    }
+
+    res.status(201).json({
+      success: true,
+      message: "Entries uploaded successfully!",
+      count: entriesWithMetadata.length,
+    });
+  } catch (error) {
+    console.error("Error in bulk upload:", error.message);
+    res.status(400).json({
+      success: false,
+      message: "Failed to upload entries",
+      error: error.message,
+    });
+  }
+};
+
 const exportentry = async (req, res) => {
   try {
     let query = {};
