@@ -21,6 +21,7 @@ const {
   fetchNotifications,
   markNotificationsRead,
   clearNotifications,
+  getCurrentUser,
 } = require("../Controller/DataLogic");
 
 router.post("/check-in", verifyToken, checkIn);
@@ -39,6 +40,7 @@ router.get("/tag-users", verifyToken, getUsersForTagging);
 router.get("/users", verifyToken, fetchUsers);
 router.post("/assign-user", verifyToken, assignUser);
 router.post("/unassign-user", verifyToken, unassignUser);
+router.get("/current-user", verifyToken, getCurrentUser);
 router.get("/notifications", verifyToken, fetchNotifications);
 router.post("/notificationsread", verifyToken, markNotificationsRead);
 router.delete("/notificationsdelete", verifyToken, clearNotifications);
