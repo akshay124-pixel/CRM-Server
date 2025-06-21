@@ -5,18 +5,19 @@ const Notification = require("../Schema/NotificationSchema");
 const XLSX = require("xlsx");
 const Attendance = require("../Schema/AttendanceSchema");
 const schedule = require("node-schedule");
+
 // Helper function to create a notification
-// Replace the existing createNotification function with this
-const createNotification = async (userId, message, entryId = null, io) => {
+const createNotification = async (req, userId, message, entryId = null) => {
   try {
     if (!mongoose.Types.ObjectId.isValid(userId)) {
       console.error(`Invalid userId: ${userId}`);
-      return;
+      return null;
     }
 
+    const io = req.app.get("io");
     if (!io) {
-      console.error("Socket.IO instance not provided for notification");
-      return;
+      console.error("Socket.IO instance not found");
+      return null;
     }
 
     let validatedEntryId = null;
@@ -35,7 +36,7 @@ const createNotification = async (userId, message, entryId = null, io) => {
     });
 
     await notification.save();
-    console.log(`Notification saved for user ${userId}: ${message}`);
+    console.log(`Notification created for user ${userId}: ${message}`);
 
     const notificationData = {
       ...notification.toObject(),
@@ -44,25 +45,76 @@ const createNotification = async (userId, message, entryId = null, io) => {
 
     io.to(userId.toString()).emit("newNotification", notificationData);
     console.log(`Notification emitted to user ${userId}: ${message}`);
+    return notificationData;
   } catch (error) {
-    console.error(
-      `Error creating notification for user ${userId}: ${error.message}`
-    );
+    console.error(`Error creating notification for user ${userId}:`, error);
+    return null;
   }
 };
 
-// Run date notification check at midnight
+// Schedule daily notification check at midnight
 schedule.scheduleJob("0 0 * * *", () => {
   const io = app.get("io");
-  if (io) {
-    checkDateNotifications(io);
-    console.log("Scheduled date notifications check executed");
-  } else {
+  if (!io) {
     console.error("Socket.IO instance not found for scheduled notifications");
+    return;
   }
+  checkDateNotifications(io);
+  console.log("Scheduled date notifications check executed");
 });
 
-// Update existing functions to use io
+// Check for follow-up and closing date notifications
+const checkDateNotifications = async (io) => {
+  try {
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    tomorrow.setHours(0, 0, 0, 0);
+    const dayAfterTomorrow = new Date(tomorrow);
+    dayAfterTomorrow.setDate(tomorrow.getDate() + 1);
+
+    const entries = await Entry.find({
+      $or: [
+        { followUpDate: { $gte: tomorrow, $lt: dayAfterTomorrow } },
+        { expectedClosingDate: { $gte: tomorrow, $lt: dayAfterTomorrow } },
+      ],
+    })
+      .populate("createdBy", "username")
+      .populate("assignedTo", "username");
+
+    for (const entry of entries) {
+      const messagePrefix = entry.followUpDate
+        ? `Follow-up due tomorrow for ${entry.customerName}`
+        : `Expected closing date tomorrow for ${entry.customerName}`;
+      const message = `${messagePrefix} (Entry ID: ${entry._id})`;
+
+      // Notify creator
+      if (entry.createdBy) {
+        await createNotification(
+          { app: { get: () => io } },
+          entry.createdBy._id,
+          message,
+          entry._id
+        );
+      }
+
+      // Notify assigned users
+      if (entry.assignedTo && Array.isArray(entry.assignedTo)) {
+        for (const user of entry.assignedTo) {
+          await createNotification(
+            { app: { get: () => io } },
+            user._id,
+            message,
+            entry._id
+          );
+        }
+      }
+    }
+  } catch (error) {
+    console.error("Error in date-based notifications:", error);
+  }
+};
+
+// Data Entry Logic
 const DataentryLogic = async (req, res) => {
   try {
     const {
@@ -87,7 +139,6 @@ const DataentryLogic = async (req, res) => {
     } = req.body;
 
     const numericEstimatedValue = estimatedValue ? Number(estimatedValue) : 0;
-    const io = req.app.get("io");
 
     // Validate products
     if (products && Array.isArray(products) && products.length > 0) {
@@ -108,25 +159,24 @@ const DataentryLogic = async (req, res) => {
       }
     }
 
-    // Validate assignedTo if provided
+    // Validate assignedTo
     let validatedAssignedTo = [];
     if (assignedTo && Array.isArray(assignedTo) && assignedTo.length > 0) {
       for (const userId of assignedTo) {
-        if (mongoose.Types.ObjectId.isValid(userId)) {
-          const user = await User.findById(userId);
-          if (!user) {
-            return res.status(400).json({
-              success: false,
-              message: `Invalid user ID in assignedTo: ${userId}`,
-            });
-          }
-          validatedAssignedTo.push(userId);
-        } else {
+        if (!mongoose.Types.ObjectId.isValid(userId)) {
           return res.status(400).json({
             success: false,
-            message: `Invalid user ID format in assignedTo: ${userId}`,
+            message: `Invalid user ID format: ${userId}`,
           });
         }
+        const user = await User.findById(userId);
+        if (!user) {
+          return res.status(400).json({
+            success: false,
+            message: `User not found: ${userId}`,
+          });
+        }
+        validatedAssignedTo.push(userId);
       }
     }
 
@@ -170,24 +220,20 @@ const DataentryLogic = async (req, res) => {
 
     await newEntry.save();
 
-    // Create notification for entry creation
+    // Create notifications
     await createNotification(
+      req,
       req.user.id,
       `New entry created: ${customerName}`,
-      newEntry._id,
-      io
+      newEntry._id
     );
-
-    // Create notifications for assigned users
-    if (validatedAssignedTo.length > 0) {
-      for (const userId of validatedAssignedTo) {
-        await createNotification(
-          userId,
-          `You have been assigned to a new entry: ${customerName}`,
-          newEntry._id,
-          io
-        );
-      }
+    for (const userId of validatedAssignedTo) {
+      await createNotification(
+        req,
+        userId,
+        `Assigned to new entry: ${customerName}`,
+        newEntry._id
+      );
     }
 
     const populatedEntry = await Entry.findById(newEntry._id)
@@ -198,10 +244,10 @@ const DataentryLogic = async (req, res) => {
     res.status(201).json({
       success: true,
       data: populatedEntry,
-      message: "Entry created successfully.",
+      message: "Entry created successfully",
     });
   } catch (error) {
-    console.error("Error in DataentryLogic:", error.message);
+    console.error("Error in DataentryLogic:", error);
     res.status(500).json({
       success: false,
       message: "Internal server error",
@@ -210,19 +256,35 @@ const DataentryLogic = async (req, res) => {
   }
 };
 
+// Fetch Entries
 const fetchEntries = async (req, res) => {
   try {
-    let entries;
+    let entries = [];
+
     if (req.user.role === "superadmin") {
       entries = await Entry.find()
-        .populate("createdBy", "username role assignedAdmin")
-        .populate("assignedTo", "username role assignedAdmin")
+        .populate("createdBy", "username role assignedAdmins")
+        .populate("assignedTo", "username role assignedAdmins")
         .lean();
     } else if (req.user.role === "admin") {
       const teamMembers = await User.find({
-        assignedAdmin: req.user.id,
+        assignedAdmins: req.user.id,
+      }).select("_id role");
+      let teamMemberIds = teamMembers.map((member) => member._id);
+
+      const adminIds = teamMembers
+        .filter((member) => member.role === "admin")
+        .map((admin) => admin._id);
+      const nestedMembers = await User.find({
+        assignedAdmins: { $in: adminIds },
       }).select("_id");
-      const teamMemberIds = teamMembers.map((member) => member._id);
+      teamMemberIds = [
+        ...new Set([
+          ...teamMemberIds,
+          ...nestedMembers.map((member) => member._id),
+        ]),
+      ];
+
       entries = await Entry.find({
         $or: [
           { createdBy: req.user.id },
@@ -231,97 +293,30 @@ const fetchEntries = async (req, res) => {
           { assignedTo: { $in: teamMemberIds } },
         ],
       })
-        .populate("createdBy", "username role assignedAdmin")
-        .populate("assignedTo", "username role assignedAdmin")
+        .populate("createdBy", "username role assignedAdmins")
+        .populate("assignedTo", "username role assignedAdmins")
         .lean();
     } else {
       entries = await Entry.find({
         $or: [{ createdBy: req.user.id }, { assignedTo: req.user.id }],
       })
-        .populate("createdBy", "username role assignedAdmin")
-        .populate("assignedTo", "username role assignedAdmin")
+        .populate("createdBy", "username role assignedAdmins")
+        .populate("assignedTo", "username role assignedAdmins")
         .lean();
     }
+
     res.status(200).json(entries);
   } catch (error) {
-    console.error("Error fetching entries:", error.message);
+    console.error("Error fetching entries:", error);
     res.status(500).json({
       success: false,
       message: "Failed to fetch entries",
       error: error.message,
     });
   }
-}; // Helper function to check and generate date-based notifications
-const checkDateNotifications = async (io) => {
-  try {
-    const tomorrow = new Date();
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    tomorrow.setHours(0, 0, 0, 0);
-    const dayAfterTomorrow = new Date(tomorrow);
-    dayAfterTomorrow.setDate(tomorrow.getDate() + 1);
-
-    const entries = await Entry.find({
-      $or: [
-        { followUpDate: { $gte: tomorrow, $lt: dayAfterTomorrow } },
-        { expectedClosingDate: { $gte: tomorrow, $lt: dayAfterTomorrow } },
-      ],
-    }).populate("assignedTo createdBy", "username");
-
-    for (const entry of entries) {
-      const messagePrefix = entry.followUpDate
-        ? `Follow-up due tomorrow for ${entry.customerName}`
-        : `Expected closing date tomorrow for ${entry.customerName}`;
-      const message = `${messagePrefix} (Entry ID: ${entry._id})`;
-
-      // Notify creator
-      if (entry.createdBy) {
-        await createNotification(entry.createdBy._id, message, entry._id, io);
-      }
-
-      // Notify assigned users
-      if (entry.assignedTo && Array.isArray(entry.assignedTo)) {
-        for (const user of entry.assignedTo) {
-          await createNotification(user._id, message, entry._id, io);
-        }
-      }
-    }
-  } catch (error) {
-    console.error("Error in date-based notifications:", error.message);
-  }
 };
 
-// Run date notification check periodically
-setInterval(() => checkDateNotifications(app.get("io")), 24 * 60 * 60 * 1000);
-
-// New endpoint to clear all notifications
-const clearNotifications = async (req, res) => {
-  try {
-    if (!req.user || !req.user.id) {
-      return res.status(401).json({
-        success: false,
-        message: "Unauthorized: No user found",
-      });
-    }
-
-    await Notification.deleteMany({ userId: req.user.id });
-
-    const io = req.app.get("io");
-    io.to(req.user.id).emit("notificationsCleared");
-
-    res.status(200).json({
-      success: true,
-      message: "All notifications cleared successfully",
-    });
-  } catch (error) {
-    console.error("Error clearing notifications:", error.message);
-    res.status(500).json({
-      success: false,
-      message: "Failed to clear notifications",
-      error: error.message,
-    });
-  }
-};
-// Update existing endpoints to include io
+// Delete Entry
 const DeleteData = async (req, res) => {
   try {
     if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
@@ -337,13 +332,11 @@ const DeleteData = async (req, res) => {
         .json({ success: false, message: "Entry not found" });
     }
 
-    const io = req.app.get("io");
-
     if (req.user.role === "superadmin") {
       // Superadmin can delete any entry
     } else if (req.user.role === "admin") {
       const teamMembers = await User.find({
-        assignedAdmin: req.user.id,
+        assignedAdmins: req.user.id,
       }).select("_id");
       const teamMemberIds = teamMembers.map((member) => member._id);
       if (
@@ -362,24 +355,20 @@ const DeleteData = async (req, res) => {
       }
     }
 
-    // Create notification for deletion
+    // Notifications
     await createNotification(
+      req,
       req.user.id,
       `Entry deleted: ${entry.customerName}`,
-      entry._id,
-      io
+      entry._id
     );
-
-    // Notify assigned users
-    if (entry.assignedTo && Array.isArray(entry.assignedTo)) {
-      for (const userId of entry.assignedTo) {
-        await createNotification(
-          userId,
-          `Entry you were assigned to was deleted: ${entry.customerName}`,
-          entry._id,
-          io
-        );
-      }
+    for (const userId of entry.assignedTo || []) {
+      await createNotification(
+        req,
+        userId,
+        `Entry deleted: ${entry.customerName}`,
+        entry._id
+      );
     }
 
     await Entry.findByIdAndDelete(req.params.id);
@@ -387,7 +376,7 @@ const DeleteData = async (req, res) => {
       .status(200)
       .json({ success: true, message: "Entry deleted successfully" });
   } catch (error) {
-    console.error("Error deleting entry:", error.message);
+    console.error("Error deleting entry:", error);
     res.status(500).json({
       success: false,
       message: "Failed to delete entry",
@@ -395,6 +384,8 @@ const DeleteData = async (req, res) => {
     });
   }
 };
+
+// Edit Entry
 const editEntry = async (req, res) => {
   try {
     const {
@@ -438,37 +429,31 @@ const editEntry = async (req, res) => {
         .json({ success: false, message: "Entry not found" });
     }
 
-    const io = req.app.get("io");
-
-    // Validate assignedTo if provided
+    // Validate assignedTo
     let validatedAssignedTo = [];
-    if (assignedTo && Array.isArray(assignedTo) && assignedTo.length > 0) {
+    if (assignedTo && Array.isArray(assignedTo)) {
       for (const userId of assignedTo) {
-        if (mongoose.Types.ObjectId.isValid(userId)) {
-          const user = await User.findById(userId);
-          if (!user) {
-            return res.status(400).json({
-              success: false,
-              message: `Invalid user ID in assignedTo: ${userId}`,
-            });
-          }
-          validatedAssignedTo.push(userId);
-        } else {
+        if (!mongoose.Types.ObjectId.isValid(userId)) {
           return res.status(400).json({
             success: false,
-            message: `Invalid user ID format in assignedTo: ${userId}`,
+            message: `Invalid user ID format: ${userId}`,
           });
         }
+        const user = await User.findById(userId);
+        if (!user) {
+          return res.status(400).json({
+            success: false,
+            message: `User not found: ${userId}`,
+          });
+        }
+        validatedAssignedTo.push(userId);
       }
     }
 
-    // Check if assignedTo has changed
     const assignedToChanged =
       JSON.stringify(entry.assignedTo) !== JSON.stringify(validatedAssignedTo);
 
-    // Create history entry if relevant fields changed
     let historyEntry = {};
-
     if (status !== undefined && status !== entry.status) {
       historyEntry = {
         status,
@@ -486,7 +471,7 @@ const editEntry = async (req, res) => {
       historyEntry = {
         status: entry.status,
         remarks,
-        liveLocation: liveLocation || entry.liveLocation,
+        liveLocation: liveLocation || null,
         products: products || entry.products,
         assignedTo: validatedAssignedTo,
         timestamp: new Date(),
@@ -498,7 +483,7 @@ const editEntry = async (req, res) => {
       historyEntry = {
         status: entry.status,
         remarks: remarks || "Products updated",
-        liveLocation: liveLocation || entry.liveLocation,
+        liveLocation: liveLocation || null,
         products,
         assignedTo: validatedAssignedTo,
         timestamp: new Date(),
@@ -507,7 +492,7 @@ const editEntry = async (req, res) => {
       historyEntry = {
         status: entry.status,
         remarks: remarks || "Assigned users updated",
-        liveLocation: liveLocation || entry.liveLocation,
+        liveLocation: liveLocation || null,
         products: products || entry.products,
         assignedTo: validatedAssignedTo,
         timestamp: new Date(),
@@ -538,47 +523,37 @@ const editEntry = async (req, res) => {
     }
 
     if (Object.keys(historyEntry).length > 0) {
-      if (entry.history.length >= 4) {
+      if (entry.history.length >= 10) {
         entry.history.shift();
       }
       entry.history.push(historyEntry);
+    }
 
-      // Create notification for update
-      await createNotification(
-        req.user.id,
-        `Entry updated: ${customerName || entry.customerName}`,
-        entry._id,
-        io
-      );
-
-      // Notify assigned users if changed
-      if (assignedToChanged) {
-        for (const userId of validatedAssignedTo) {
+    if (assignedToChanged) {
+      await Promise.all([
+        ...validatedAssignedTo.map(async (userId) => {
           if (!entry.assignedTo.includes(userId)) {
             await createNotification(
+              req,
               userId,
-              `You have been assigned to an updated entry: ${
+              `Assigned to updated entry: ${
                 customerName || entry.customerName
               }`,
-              entry._id,
-              io
+              entry._id
             );
           }
-        }
-        // Notify users who were unassigned
-        for (const userId of entry.assignedTo) {
+        }),
+        ...entry.assignedTo.map(async (userId) => {
           if (!validatedAssignedTo.includes(userId)) {
             await createNotification(
+              req,
               userId,
-              `You have been unassigned from entry: ${
-                customerName || entry.customerName
-              }`,
-              entry._id,
-              io
+              `Unassigned from entry: ${customerName || entry.customerName}`,
+              entry._id
             );
           }
-        }
-      }
+        }),
+      ]);
     }
 
     Object.assign(entry, {
@@ -607,14 +582,12 @@ const editEntry = async (req, res) => {
         followUpDate: followUpDate ? new Date(followUpDate) : null,
       }),
       ...(closetype !== undefined && { closetype: closetype.trim() }),
-      ...(remarks !== undefined && { remarks }),
+      ...(remarks !== undefined && { remarks: remarks.trim() }),
       ...(nextAction !== undefined && { nextAction: nextAction.trim() }),
       ...(estimatedValue !== undefined && {
         estimatedValue: Number(estimatedValue),
       }),
-      ...(closeamount !== undefined && {
-        closeamount: Number(closeamount),
-      }),
+      ...(closeamount !== undefined && { closeamount: Number(closeamount) }),
       ...(firstPersonMeet !== undefined && {
         firstPersonMeet: firstPersonMeet.trim(),
       }),
@@ -644,7 +617,7 @@ const editEntry = async (req, res) => {
       message: "Entry updated successfully",
     });
   } catch (error) {
-    console.error("Error in editEntry:", error.message);
+    console.error("Error in editEntry:", error);
     if (error.name === "ValidationError") {
       const errors = Object.values(error.errors).map((err) => ({
         field: err.path,
@@ -663,6 +636,8 @@ const editEntry = async (req, res) => {
     });
   }
 };
+
+// Bulk Upload Stocks
 const bulkUploadStocks = async (req, res) => {
   try {
     const newEntries = req.body;
@@ -675,9 +650,9 @@ const bulkUploadStocks = async (req, res) => {
         {
           status: entry.Status || "Not Found",
           remarks: entry.Remarks || "Bulk upload entry",
-          liveLocation: entry.Live_Location || undefined,
-          products: entry.Products ? JSON.parse(entry.Products) : [],
-          assignedTo: entry.Assigned_To ? [entry.Assigned_To] : [],
+          liveLocation: entry.liveLocation || null,
+          products: entry.products || [],
+          assignedTo: entry.Assigned_To || [],
           timestamp: new Date(),
         },
       ],
@@ -688,32 +663,31 @@ const bulkUploadStocks = async (req, res) => {
       const batch = entriesWithMetadata.slice(i, i + batchSize);
       const insertedEntries = await Entry.insertMany(batch, { ordered: false });
 
-      // Create notifications for each inserted entry
       for (const entry of insertedEntries) {
         await createNotification(
+          req,
           req.user.id,
           `Bulk entry created: ${entry.customerName}`,
           entry._id
         );
-        if (entry.assignedTo && Array.isArray(entry.assignedTo)) {
-          for (const userId of entry.assignedTo) {
-            await createNotification(
-              userId,
-              `Assigned to bulk entry: ${entry.customerName}`,
-              entry._id
-            );
-          }
+        for (const userId of entry.assignedTo || []) {
+          await createNotification(
+            req,
+            userId,
+            `Assigned to bulk entry: ${entry.customerName}`,
+            entry._id
+          );
         }
       }
     }
 
     res.status(201).json({
       success: true,
-      message: "Entries uploaded successfully!",
+      message: "Entries uploaded successfully",
       count: entriesWithMetadata.length,
     });
   } catch (error) {
-    console.error("Error in bulk upload:", error.message);
+    console.error("Error in bulk upload:", error);
     res.status(400).json({
       success: false,
       message: "Failed to upload entries",
@@ -722,15 +696,17 @@ const bulkUploadStocks = async (req, res) => {
   }
 };
 
+// Export Entries
 const exportentry = async (req, res) => {
   try {
     let query = {};
     const filters = req.query;
 
     if (req.user.role === "superadmin") {
+      // No restrictions
     } else if (req.user.role === "admin") {
       const teamMembers = await User.find({
-        assignedAdmin: req.user.id,
+        assignedAdmins: req.user.id,
       }).select("_id");
       const teamMemberIds = teamMembers.map((member) => member._id);
       query = {
@@ -761,9 +737,6 @@ const exportentry = async (req, res) => {
     if (filters.city) {
       query.city = filters.city;
     }
-    if (filters.type) {
-      query.type = filters.type;
-    }
     if (filters.fromDate && filters.toDate) {
       query.createdAt = {
         $gte: new Date(filters.fromDate),
@@ -772,7 +745,8 @@ const exportentry = async (req, res) => {
     }
 
     const entries = await Entry.find(query)
-      .populate("createdBy", "username role assignedAdmin")
+      .populate("createdBy", "username role assignedAdmins")
+      .populate("assignedTo", "username role assignedAdmins")
       .lean();
 
     const formattedEntries = entries.map((entry) => ({
@@ -787,7 +761,7 @@ const exportentry = async (req, res) => {
       City: entry.city || "N/A",
       Products:
         entry.products
-          .map(
+          ?.map(
             (p) =>
               `${p.name} (${p.specification}, ${p.size}, Qty: ${p.quantity})`
           )
@@ -796,20 +770,23 @@ const exportentry = async (req, res) => {
       Organization: entry.organization || "N/A",
       Category: entry.category || "N/A",
       Status: entry.status || "Not Found",
-      Created_At: entry.createdAt.toLocaleDateString(),
+      Created_At: entry.createdAt?.toLocaleDateString() || "N/A",
       Created_By: entry.createdBy?.username || "Unknown",
+      Assigned_To:
+        entry.assignedTo?.map((user) => user.username).join(", ") ||
+        "Unassigned",
       Close_Type: entry.closetype || "Not Set",
       Expected_Closing_Date: entry.expectedClosingDate
         ? entry.expectedClosingDate.toLocaleDateString()
         : "Not Set",
-      Follow_Up_Date: entry.followUpDate
+      FollowUp_Date: entry.followUpDate
         ? entry.followUpDate.toLocaleDateString()
         : "Not Set",
       Remarks: entry.remarks || "Not Set",
-      Estimated_Value: entry.estimatedValue || 0,
-      Close_Amount: entry.closeamount || 0,
+      Estimated_Value: entry.estimatedValue || "N/A",
+      Close_Amount: entry.closeamount || "N/A",
       Next_Action: entry.nextAction || "Not Set",
-      Live_Location: entry.liveLocation || "Not Set",
+      Live_Location: entry.liveLocation || "N/A",
       First_Person_Met: entry.firstPersonMeet || "Not Set",
       Second_Person_Met: entry.secondPersonMeet || "Not Set",
       Third_Person_Met: entry.thirdPersonMeet || "Not Set",
@@ -831,14 +808,14 @@ const exportentry = async (req, res) => {
       { wch: 15 },
       { wch: 15 },
       { wch: 15 },
+      { wch: 20 },
       { wch: 15 },
       { wch: 15 },
-      { wch: 20 },
-      { wch: 20 },
+      { wch: 15 },
       { wch: 30 },
       { wch: 15 },
       { wch: 15 },
-      { wch: 20 },
+      { wch: 15 },
       { wch: 20 },
       { wch: 20 },
       { wch: 20 },
@@ -858,7 +835,7 @@ const exportentry = async (req, res) => {
     );
     res.send(fileBuffer);
   } catch (error) {
-    console.error("Error exporting entries:", error.message);
+    console.error("Error exporting entries:", error);
     res.status(500).json({
       success: false,
       message: "Error exporting entries",
@@ -867,23 +844,23 @@ const exportentry = async (req, res) => {
   }
 };
 
+// Fetch all users (Superadmin only)
 const fetchAllUsers = async (req, res) => {
   try {
     if (req.user.role !== "superadmin") {
       return res.status(403).json({
         success: false,
-        message: "Unauthorized: Superadmin access required",
+        message: "Unauthorized access",
       });
     }
 
     const users = await User.find({})
-      .select("_id username email role assignedAdmin")
+      .select("_id username email role assignedAdmins")
       .lean();
 
-    console.log("Fetched Users for Superadmin:", users);
     res.status(200).json(users);
   } catch (error) {
-    console.error("Error fetching all users:", error.message);
+    console.error("Error fetching all users:", error);
     res.status(500).json({
       success: false,
       message: "Failed to fetch users",
@@ -892,15 +869,16 @@ const fetchAllUsers = async (req, res) => {
   }
 };
 
+// Get admin status
 const getAdmin = async (req, res) => {
   try {
-    if (!req.user || !req.user.id) {
-      return res
-        .status(401)
-        .json({ success: false, message: "Unauthorized: No user found" });
+    if (!req.user?.id) {
+      return res.status(401).json({ success: false, message: "Unauthorized" });
     }
 
-    const user = await User.findById(req.user.id).lean();
+    const user = await User.findById(req.user.id)
+      .select("_id username role assignedAdmins")
+      .lean();
     if (!user) {
       return res
         .status(404)
@@ -914,7 +892,7 @@ const getAdmin = async (req, res) => {
       userId: user._id.toString(),
     });
   } catch (error) {
-    console.error("Error fetching user:", error.message);
+    console.error("Error fetching user:", error);
     res.status(500).json({
       success: false,
       message: "Internal server error",
@@ -923,54 +901,44 @@ const getAdmin = async (req, res) => {
   }
 };
 
+// Fetch users (Role-based)
 const fetchUsers = async (req, res) => {
   try {
-    let users;
+    let users = [];
 
     if (req.user.role === "superadmin") {
       users = await User.find({})
-        .select("_id username email role assignedAdmin")
+        .select("_id username email role assignedAdmins")
         .lean();
     } else if (req.user.role === "admin") {
-      const teamMembers = await User.find({
-        $or: [{ assignedAdmin: req.user.id }, { _id: req.user.id }],
+      users = await User.find({
+        $or: [{ assignedAdmins: req.user.id }, { _id: req.user.id }],
       })
-        .select("_id username email role assignedAdmin")
+        .select("_id username email role assignedAdmins")
         .lean();
-      users = teamMembers;
     } else {
-      const user = await User.findById(req.user.id).lean();
-      if (!user.assignedAdmin) {
-        users = [
-          {
-            _id: user._id,
-            username: user.username,
-            email: user.email,
-            role: user.role,
-          },
-        ];
+      const user = await User.findById(req.user.id)
+        .select("_id username email role assignedAdmins")
+        .lean();
+      if (!user.assignedAdmins?.length) {
+        users.push(user);
       } else {
         users = await User.find({
-          assignedAdmin: user.assignedAdmin,
+          assignedAdmins: { $in: user.assignedAdmins },
         })
-          .select("_id username")
+          .select("_id username email role assignedAdmins")
           .lean();
-        users.push({
-          _id: user._id,
-          username: user.username,
-        });
+        users.push(user);
       }
     }
 
-    if (!users || users.length === 0) {
-      return res.status(200).json([]);
-    }
+    if (!users.length) return res.status(200).json([]);
 
     users.sort((a, b) => a.username.localeCompare(b.username));
 
     res.status(200).json(users);
   } catch (error) {
-    console.error("Error fetching users:", error.message);
+    console.error("Error fetching users:", error);
     res.status(500).json({
       success: false,
       message: "Failed to fetch users",
@@ -979,74 +947,88 @@ const fetchUsers = async (req, res) => {
   }
 };
 
+// Fetch team
 const fetchTeam = async (req, res) => {
   try {
-    let users;
+    console.log("Fetching team for user:", req.user.id, "Role:", req.user.role);
+
+    let users = [];
 
     if (req.user.role === "superadmin") {
-      users = await User.find({})
-        .select("_id username email role assignedAdmin")
+      users = await User.find({ _id: { $ne: req.user.id } })
+        .select("_id username email role assignedAdmins")
         .lean();
+      console.log("Superadmin users fetched:", users.length);
     } else if (req.user.role === "admin") {
-      users = await User.find({
-        $or: [{ assignedAdmin: req.user.id }, { assignedAdmin: null }],
-      })
-        .select("_id username email role assignedAdmin")
+      // Fetch all admins to determine which admins are assigned to others
+      const allAdmins = await User.find({ role: "admin" })
+        .select("_id assignedAdmins")
         .lean();
-    } else {
-      const user = await User.findById(req.user.id).lean();
-      if (!user.assignedAdmin) {
-        users = [
-          {
-            _id: user._id,
-            username: user.username,
-            email: user.email,
-            role: user.role,
-            assignedAdmin: null,
-            assignedAdminUsername: "Unassigned",
-          },
-        ];
-      } else {
-        users = await User.find({
-          assignedAdmin: user.assignedAdmin,
-        })
-          .select("_id username email role assignedAdmin")
-          .lean();
-        users.push({
-          _id: user._id,
-          username: user.username,
-          email: user.email,
-          role: user.role,
-          assignedAdmin: user.assignedAdmin,
-        });
-      }
-    }
+      const assignedAdminIds = allAdmins
+        .filter(
+          (admin) =>
+            admin.assignedAdmins?.length > 0 &&
+            admin._id.toString() !== req.user.id
+        )
+        .map((admin) => admin._id.toString());
 
-    if (!users || users.length === 0) {
+      users = await User.find({
+        $or: [
+          { assignedAdmins: { $size: 0 } }, // Unassigned users
+          { assignedAdmins: req.user.id }, // Users assigned to current admin
+          {
+            role: "admin",
+            _id: { $ne: req.user.id },
+            _id: { $nin: assignedAdminIds },
+          }, // Unassigned admins
+        ],
+      })
+        .select("_id username email role assignedAdmins")
+        .lean();
+      console.log("Admin users fetched:", users.length);
+    } else {
+      console.log("Other user, returning empty list");
       return res.status(200).json([]);
     }
 
+    if (!users.length) {
+      console.log("No users found, returning empty array");
+      return res.status(200).json([]);
+    }
+
+    // Fetch all admins for username mapping
     const adminIds = [
       ...new Set(
-        users.filter((u) => u.assignedAdmin).map((u) => u.assignedAdmin)
+        users
+          .flatMap((u) => u.assignedAdmins || [])
+          .filter((id) => mongoose.Types.ObjectId.isValid(id))
       ),
     ];
+    console.log("Admin IDs for mapping:", adminIds);
     const admins = await User.find({ _id: { $in: adminIds } })
-      .select("_id username")
+      .select("_id username role")
       .lean();
-    const adminMap = new Map(admins.map((a) => [a._id.toString(), a.username]));
+    const adminMap = new Map(
+      admins.map((a) => [
+        a._id.toString(),
+        { username: a.username, role: a.role },
+      ])
+    );
 
-    for (let user of users) {
-      user.assignedAdminUsername = user.assignedAdmin
-        ? adminMap.get(user.assignedAdmin.toString()) || "Unknown"
-        : "Unassigned";
+    for (const user of users) {
+      user.assignedAdminUsernames =
+        user.assignedAdmins
+          ?.map((id) => adminMap.get(id.toString())?.username || "Unknown")
+          .filter((username) => username !== "Unknown")
+          .join(", ") || "Unassigned";
     }
 
     users.sort((a, b) => a.username.localeCompare(b.username));
 
+    console.log("Final users sent to frontend:", users.length);
     res.status(200).json(users);
   } catch (error) {
-    console.error("Error fetching team:", error.message);
+    console.error("Error fetching team:", error);
     res.status(500).json({
       success: false,
       message: "Failed to fetch team",
@@ -1055,20 +1037,17 @@ const fetchTeam = async (req, res) => {
   }
 };
 
+// Get users for tagging
 const getUsersForTagging = async (req, res) => {
   try {
     const users = await User.find({})
       .select("_id username")
-      .lean()
-      .sort({ username: 1 });
-
-    if (!users || users.length === 0) {
-      return res.status(200).json([]);
-    }
+      .sort({ username: 1 })
+      .lean();
 
     res.status(200).json(users);
   } catch (error) {
-    console.error("Error fetching users for tagging:", error.message);
+    console.error("Error fetching users for tagging:", error);
     res.status(500).json({
       success: false,
       message: "Failed to fetch users for tagging",
@@ -1077,6 +1056,7 @@ const getUsersForTagging = async (req, res) => {
   }
 };
 
+// Assign user to admin
 const assignUser = async (req, res) => {
   try {
     const { userId } = req.body;
@@ -1087,6 +1067,13 @@ const assignUser = async (req, res) => {
         .json({ success: false, message: "Invalid user ID" });
     }
 
+    if (userId === req.user.id) {
+      return res.status(400).json({
+        success: false,
+        message: "Cannot assign yourself",
+      });
+    }
+
     if (req.user.role !== "admin" && req.user.role !== "superadmin") {
       return res.status(403).json({ success: false, message: "Unauthorized" });
     }
@@ -1095,48 +1082,69 @@ const assignUser = async (req, res) => {
     if (!user || user.role === "superadmin") {
       return res.status(404).json({
         success: false,
-        message: "User not found or cannot assign a superadmin",
+        message: "User not found or cannot assign superadmin",
       });
     }
 
-    if (req.user.role === "admin" && user.assignedAdmin) {
-      return res.status(403).json({
+    if (!user.assignedAdmins) user.assignedAdmins = [];
+    if (user.assignedAdmins.includes(req.user.id)) {
+      return res.status(400).json({
         success: false,
-        message: "User is already assigned to another admin",
+        message: "User is already assigned to you",
       });
     }
 
-    if (user.role === "admin") {
-      await User.updateMany(
-        { assignedAdmin: user._id },
-        { assignedAdmin: req.user.id }
-      );
-    }
-
-    user.assignedAdmin = req.user.id;
+    // Assign the user to the current admin
+    user.assignedAdmins.push(req.user.id);
     await user.save();
 
-    // Create notification for assignment
+    // If the assigned user is an admin, assign their team as well
+    if (user.role === "admin") {
+      const teamMembers = await User.find({ assignedAdmins: user._id });
+      for (const teamMember of teamMembers) {
+        if (!teamMember.assignedAdmins) teamMember.assignedAdmins = [];
+        if (!teamMember.assignedAdmins.includes(req.user.id)) {
+          teamMember.assignedAdmins.push(req.user.id);
+          await teamMember.save();
+          await createNotification(
+            req,
+            teamMember._id,
+            `Assigned to admin: ${req.user.username} via admin ${user.username}`,
+            null
+          );
+        }
+      }
+    }
+
     await createNotification(
+      req,
       userId,
-      `You have been assigned to admin ${req.user.username}`,
+      `Assigned to admin: ${req.user.username}`,
       null
     );
 
-    const admin = await User.findById(req.user.id).select("username").lean();
+    const adminIds = user.assignedAdmins;
+    const admins = await User.find({ _id: { $in: adminIds } })
+      .select("_id username")
+      .lean();
+    const adminMap = new Map(admins.map((a) => [a._id.toString(), a.username]));
+
     res.status(200).json({
       success: true,
       message: "User and team assigned successfully",
       user: {
         id: user._id,
         username: user.username,
-        assignedAdmin: user.assignedAdmin,
-        assignedAdminUsername: admin ? admin.username : "Unknown",
+        assignedAdmins: user.assignedAdmins,
+        assignedAdminUsernames:
+          user.assignedAdmins
+            .map((id) => adminMap.get(id.toString()) || "Unknown")
+            .join(", ") || "Unassigned",
         role: user.role,
       },
     });
   } catch (error) {
-    console.error("Error assigning user:", error.message);
+    console.error("Error assigning user:", error);
     res.status(500).json({
       success: false,
       message: "Failed to assign user",
@@ -1145,6 +1153,7 @@ const assignUser = async (req, res) => {
   }
 };
 
+// Unassign user from admin
 const unassignUser = async (req, res) => {
   try {
     const { userId } = req.body;
@@ -1163,43 +1172,82 @@ const unassignUser = async (req, res) => {
     if (!user || user.role === "superadmin") {
       return res.status(404).json({
         success: false,
-        message: "User not found or cannot unassign a superadmin",
+        message: "User not found or cannot unassign superadmin",
       });
     }
 
+    if (!user.assignedAdmins?.length) {
+      return res.status(400).json({
+        success: false,
+        message: "User is not assigned to any admin",
+      });
+    }
+
+    // Check if user is assigned by a superadmin
+    const assignedBySuperAdmin = await User.findOne({
+      _id: { $in: user.assignedAdmins },
+      role: "superadmin",
+    });
+
     if (
       req.user.role === "admin" &&
-      (!user.assignedAdmin || user.assignedAdmin.toString() !== req.user.id)
+      assignedBySuperAdmin &&
+      !user.assignedAdmins.includes(req.user.id)
     ) {
+      return res.status(403).json({
+        success: false,
+        message: "Cannot unassign user assigned by superadmin",
+      });
+    }
+
+    // Superadmin can unassign anyone, admins can unassign their own or non-superadmin-assigned users
+    if (
+      req.user.role === "superadmin" ||
+      user.assignedAdmins.includes(req.user.id) ||
+      (!assignedBySuperAdmin && req.user.role === "admin")
+    ) {
+      if (user.role === "admin") {
+        // Unassign the admin's team
+        const teamMembers = await User.find({ assignedAdmins: user._id });
+        for (const teamMember of teamMembers) {
+          teamMember.assignedAdmins = teamMember.assignedAdmins.filter(
+            (id) => id.toString() !== req.user.id
+          );
+          await teamMember.save();
+          await createNotification(
+            req,
+            teamMember._id,
+            `Unassigned from admin: ${req.user.username}`,
+            null
+          );
+        }
+      }
+
+      // Unassign the user
+      user.assignedAdmins = user.assignedAdmins.filter(
+        (id) => id.toString() !== req.user.id
+      );
+      await user.save();
+
+      await createNotification(
+        req,
+        userId,
+        `Unassigned from admin: ${req.user.username}`,
+        null
+      );
+
+      res.status(200).json({
+        success: true,
+        message: "User and team unassigned successfully",
+      });
+    } else {
       return res.status(403).json({
         success: false,
         message: "Unauthorized to unassign this user",
       });
     }
-
-    user.assignedAdmin = null;
-    await user.save();
-
-    // Create notification for unassignment
-    await createNotification(
-      userId,
-      `You have been unassigned from your admin`,
-      null
-    );
-
-    res.status(200).json({
-      success: true,
-      message: "User unassigned successfully",
-      user: {
-        id: user._id,
-        username: user.username,
-        assignedAdmin: user.assignedAdmin,
-        assignedAdminUsername: "Unassigned",
-        role: user.role,
-      },
-    });
   } catch (error) {
-    console.error("Error unassigning user:", error.message);
+    console.error("Error unassigning user:", error);
     res.status(500).json({
       success: false,
       message: "Failed to unassign user",
@@ -1208,21 +1256,57 @@ const unassignUser = async (req, res) => {
   }
 };
 
+// Get current user
+const getCurrentUser = async (req, res) => {
+  try {
+    console.log("Fetching current user:", req.user.id);
+    if (!mongoose.Types.ObjectId.isValid(req.user.id)) {
+      console.error("Invalid user ID:", req.user.id);
+      return res.status(400).json({
+        success: false,
+        message: "Invalid user ID format",
+      });
+    }
+
+    const user = await User.findById(req.user.id)
+      .select("_id username email role assignedAdmins")
+      .lean();
+
+    if (!user) {
+      console.error("User not found:", req.user.id);
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    console.log("Current user fetched:", user.username);
+    res.status(200).json({
+      success: true,
+      data: user,
+    });
+  } catch (error) {
+    console.error("Error fetching current user:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to fetch current user",
+      error: error.message,
+    });
+  }
+};
+
+// Check-in
 const checkIn = async (req, res) => {
   try {
-    if (!req.user || !req.user.id) {
-      return res.status(401).json({
-        success: false,
-        message: "Unauthorized: No user found",
-      });
+    if (!req.user?.id) {
+      return res.status(401).json({ success: false, message: "Unauthorized" });
     }
 
     const user = await User.findById(req.user.id);
     if (!user) {
-      return res.status(404).json({
-        success: false,
-        message: "User not found in database",
-      });
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
     }
 
     const today = new Date();
@@ -1250,10 +1334,9 @@ const checkIn = async (req, res) => {
       !checkInLocation.latitude ||
       !checkInLocation.longitude
     ) {
-      console.error("Invalid check-in location:", checkInLocation);
       return res.status(400).json({
         success: false,
-        message: "Check-in location with latitude and longitude is required",
+        message: "Valid check-in location required",
       });
     }
 
@@ -1261,10 +1344,9 @@ const checkIn = async (req, res) => {
     const longitude = Number(checkInLocation.longitude);
 
     if (isNaN(latitude) || isNaN(longitude)) {
-      console.error("Non-numeric coordinates:", checkInLocation);
       return res.status(400).json({
         success: false,
-        message: "Latitude and longitude must be valid numbers",
+        message: "Valid coordinates required",
       });
     }
 
@@ -1273,16 +1355,16 @@ const checkIn = async (req, res) => {
       date: today,
       checkIn: new Date(),
       checkInLocation: { latitude, longitude },
-      remarks: remarks?.trim() || "",
+      remarks: remarks?.trim() || null,
       status: "Present",
     });
 
     await attendance.save();
 
-    // Create notification for check-in
     await createNotification(
+      req,
       req.user.id,
-      `You checked in at ${new Date().toLocaleTimeString()}`,
+      `Checked in at ${new Date().toLocaleTimeString()}`,
       null
     );
 
@@ -1296,7 +1378,7 @@ const checkIn = async (req, res) => {
       data: populatedAttendance,
     });
   } catch (error) {
-    console.error("Check-in error:", error.message, error.stack);
+    console.error("Check-in error:", error);
     res.status(500).json({
       success: false,
       message: "Failed to check in",
@@ -1305,21 +1387,18 @@ const checkIn = async (req, res) => {
   }
 };
 
+// Check-out
 const checkOut = async (req, res) => {
   try {
-    if (!req.user || !req.user.id) {
-      return res.status(401).json({
-        success: false,
-        message: "Unauthorized: No user found",
-      });
+    if (!req.user?.id) {
+      return res.status(401).json({ success: false, message: "Unauthorized" });
     }
 
     const user = await User.findById(req.user.id);
     if (!user) {
-      return res.status(404).json({
-        success: false,
-        message: "User not found in database",
-      });
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
     }
 
     const today = new Date();
@@ -1334,18 +1413,16 @@ const checkOut = async (req, res) => {
     });
 
     if (!attendance) {
-      console.warn("No check-in record found for user:", req.user.id);
       return res.status(400).json({
         success: false,
-        message: "No check-in record found for today",
+        message: "No check-in record found",
       });
     }
 
     if (attendance.checkOut) {
-      console.warn("Already checked out for user:", req.user.id);
       return res.status(400).json({
         success: false,
-        message: "Already checked out today",
+        message: "Already checked out",
       });
     }
 
@@ -1356,10 +1433,9 @@ const checkOut = async (req, res) => {
       checkOutLocation.latitude == null ||
       checkOutLocation.longitude == null
     ) {
-      console.error("Invalid check-out location:", checkOutLocation);
       return res.status(400).json({
         success: false,
-        message: "Check-out location with latitude and longitude is required",
+        message: "Valid check-out location required",
       });
     }
 
@@ -1367,10 +1443,9 @@ const checkOut = async (req, res) => {
     const longitude = Number(checkOutLocation.longitude);
 
     if (isNaN(latitude) || isNaN(longitude)) {
-      console.error("Non-numeric coordinates:", checkOutLocation);
       return res.status(400).json({
         success: false,
-        message: "Latitude and longitude must be valid numbers",
+        message: "Valid coordinates required",
       });
     }
 
@@ -1381,10 +1456,10 @@ const checkOut = async (req, res) => {
 
     await attendance.save();
 
-    // Create notification for check-out
     await createNotification(
+      req,
       req.user.id,
-      `You checked out at ${new Date().toLocaleTimeString()}`,
+      `Checked out at ${new Date().toLocaleTimeString()}`,
       null
     );
 
@@ -1398,7 +1473,7 @@ const checkOut = async (req, res) => {
       data: populatedAttendance,
     });
   } catch (error) {
-    console.error("Check-out error:", error.message, error.stack);
+    console.error("Check-out error:", error);
     res.status(500).json({
       success: false,
       message: "Failed to check out",
@@ -1407,21 +1482,18 @@ const checkOut = async (req, res) => {
   }
 };
 
+// Fetch attendance
 const fetchAttendance = async (req, res) => {
   try {
-    if (!req.user || !req.user.id) {
-      return res.status(401).json({
-        success: false,
-        message: "Unauthorized: No user found",
-      });
+    if (!req.user?.id) {
+      return res.status(401).json({ success: false, message: "Unauthorized" });
     }
 
     const user = await User.findById(req.user.id);
     if (!user) {
-      return res.status(404).json({
-        success: false,
-        message: "User not found in database",
-      });
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
     }
 
     const { page = 1, limit = 10, startDate, endDate } = req.query;
@@ -1429,10 +1501,9 @@ const fetchAttendance = async (req, res) => {
     const limitNum = parseInt(limit, 10);
 
     if (isNaN(pageNum) || pageNum < 1) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid page number",
-      });
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid page number" });
     }
     if (isNaN(limitNum) || limitNum < 1 || limitNum > 100) {
       return res.status(400).json({
@@ -1450,7 +1521,7 @@ const fetchAttendance = async (req, res) => {
       if (isNaN(start.getTime()) || isNaN(end.getTime())) {
         return res.status(400).json({
           success: false,
-          message: "Invalid startDate or endDate format",
+          message: "Invalid date format",
         });
       }
 
@@ -1464,10 +1535,11 @@ const fetchAttendance = async (req, res) => {
       query.date = { $gte: start, $lte: end };
     }
 
-    if (req.user.role === "superadmin") {
-    } else if (req.user.role === "admin") {
+    if (user.role === "superadmin") {
+      // No restrictions
+    } else if (user.role === "admin") {
       const teamMembers = await User.find({
-        assignedAdmin: req.user.id,
+        assignedAdmins: req.user.id,
       }).select("_id");
       const teamMemberIds = teamMembers.map((member) => member._id);
       query.user = { $in: [req.user.id, ...teamMemberIds] };
@@ -1480,11 +1552,7 @@ const fetchAttendance = async (req, res) => {
     const totalRecords = await Attendance.countDocuments(query);
 
     const attendance = await Attendance.find(query)
-      .populate({
-        path: "user",
-        select: "username",
-        options: { strictPopulate: false },
-      })
+      .populate("user", "username")
       .sort({ date: -1 })
       .skip(skip)
       .limit(limitNum)
@@ -1495,20 +1563,18 @@ const fetchAttendance = async (req, res) => {
       user: record.user || { username: "Unknown" },
     }));
 
-    const totalPages = Math.ceil(totalRecords / limitNum);
-
     res.status(200).json({
       success: true,
       data: formattedAttendance,
       pagination: {
         currentPage: pageNum,
-        totalPages,
+        totalPages: Math.ceil(totalRecords / limitNum),
         totalRecords,
         limit: limitNum,
       },
     });
   } catch (error) {
-    console.error("Fetch attendance error:", error.message, error.stack);
+    console.error("Fetch attendance error:", error);
     res.status(500).json({
       success: false,
       message: "Failed to fetch attendance",
@@ -1517,14 +1583,11 @@ const fetchAttendance = async (req, res) => {
   }
 };
 
-// New endpoint to fetch notifications
+// Fetch notifications
 const fetchNotifications = async (req, res) => {
   try {
-    if (!req.user || !req.user.id) {
-      return res.status(401).json({
-        success: false,
-        message: "Unauthorized: No user found",
-      });
+    if (!req.user?.id) {
+      return res.status(401).json({ success: false, message: "Unauthorized" });
     }
 
     const { page = 1, limit = 10, readStatus } = req.query;
@@ -1532,10 +1595,9 @@ const fetchNotifications = async (req, res) => {
     const limitNum = parseInt(limit, 10);
 
     if (isNaN(pageNum) || pageNum < 1) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid page number",
-      });
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid page number" });
     }
     if (isNaN(limitNum) || limitNum < 1 || limitNum > 100) {
       return res.status(400).json({
@@ -1561,20 +1623,18 @@ const fetchNotifications = async (req, res) => {
       .limit(limitNum)
       .lean();
 
-    const totalPages = Math.ceil(totalRecords / limitNum);
-
     res.status(200).json({
       success: true,
       data: notifications,
       pagination: {
         currentPage: pageNum,
-        totalPages,
+        totalPages: Math.ceil(totalRecords / limitNum),
         totalRecords,
         limit: limitNum,
       },
     });
   } catch (error) {
-    console.error("Error fetching notifications:", error.message);
+    console.error("Error fetching notifications:", error);
     res.status(500).json({
       success: false,
       message: "Failed to fetch notifications",
@@ -1583,22 +1643,15 @@ const fetchNotifications = async (req, res) => {
   }
 };
 
-// New endpoint to mark notifications as read
+// Mark notifications as read
 const markNotificationsRead = async (req, res) => {
   try {
-    if (!req.user || !req.user.id) {
-      return res.status(401).json({
-        success: false,
-        message: "Unauthorized: No user found",
-      });
-    }
-
     const { notificationIds } = req.body;
 
-    if (!Array.isArray(notificationIds) || notificationIds.length === 0) {
+    if (!Array.isArray(notificationIds) || !notificationIds.length) {
       return res.status(400).json({
         success: false,
-        message: "Notification IDs must be provided as a non-empty array",
+        message: "Notification IDs required",
       });
     }
 
@@ -1618,13 +1671,38 @@ const markNotificationsRead = async (req, res) => {
 
     res.status(200).json({
       success: true,
-      message: "Notifications marked as read successfully",
+      message: "Notifications marked as read",
     });
   } catch (error) {
-    console.error("Error marking notifications as read:", error.message);
+    console.error("Error marking notifications:", error);
     res.status(500).json({
       success: false,
-      message: "Failed to mark notifications as read",
+      message: "Failed to mark notifications",
+      error: error.message,
+    });
+  }
+};
+
+// Clear notifications
+const clearNotifications = async (req, res) => {
+  try {
+    if (!req.user.id) {
+      return res.status(401).json({ success: false, message: "Unauthorized" });
+    }
+
+    await Notification.deleteMany({ userId: req.user.id });
+
+    req.app.get("io").to(req.user.id).emit("notificationsCleared");
+
+    res.status(200).json({
+      success: true,
+      message: "Notifications cleared successfully",
+    });
+  } catch (error) {
+    console.error("Error clearing notifications:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to clear notifications",
       error: error.message,
     });
   }
@@ -1650,4 +1728,5 @@ module.exports = {
   fetchNotifications,
   markNotificationsRead,
   clearNotifications,
+  getCurrentUser,
 };
