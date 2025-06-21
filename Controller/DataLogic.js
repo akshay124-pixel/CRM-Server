@@ -960,7 +960,6 @@ const fetchTeam = async (req, res) => {
         .lean();
       console.log("Superadmin users fetched:", users.length);
     } else if (req.user.role === "admin") {
-      // Fetch all admins to determine which admins are assigned to others
       const allAdmins = await User.find({ role: "admin" })
         .select("_id assignedAdmins")
         .lean();
@@ -986,8 +985,29 @@ const fetchTeam = async (req, res) => {
         .select("_id username email role assignedAdmins")
         .lean();
       console.log("Admin users fetched:", users.length);
+    } else if (req.user.role === "others") {
+      // Fetch assigned admins for "others" role users
+      const currentUser = await User.findById(req.user.id)
+        .select("_id username email role assignedAdmins")
+        .lean();
+      if (!currentUser) {
+        return res.status(404).json({
+          success: false,
+          message: "Current user not found",
+        });
+      }
+      if (currentUser.assignedAdmins?.length > 0) {
+        users = await User.find({
+          _id: { $in: currentUser.assignedAdmins },
+        })
+          .select("_id username email role assignedAdmins")
+          .lean();
+      } else {
+        users = [currentUser]; // Show only themselves if no assigned admins
+      }
+      console.log("Others users fetched:", users.length);
     } else {
-      console.log("Other user, returning empty list");
+      console.log("Unknown role, returning empty list");
       return res.status(200).json([]);
     }
 
@@ -1036,7 +1056,6 @@ const fetchTeam = async (req, res) => {
     });
   }
 };
-
 // Get users for tagging
 const getUsersForTagging = async (req, res) => {
   try {
