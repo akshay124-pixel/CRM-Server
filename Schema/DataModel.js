@@ -22,7 +22,7 @@ const historySchema = new mongoose.Schema({
 
 const entrySchema = new mongoose.Schema(
   {
-    customerName: { type: String, required: true, trim: true },
+    customerName: { type: String, trim: true },
     mobileNumber: {
       type: String,
       match: [/^\d{10}$/, "Mobile number must be 10 digits"],
@@ -48,7 +48,7 @@ const entrySchema = new mongoose.Schema(
     closeamount: { type: Number, min: 0 },
     followUpDate: { type: Date },
     remarks: { type: String, trim: true },
-    liveLocation: { type: String, required: true, trim: true },
+    liveLocation: { type: String, trim: true },
     nextAction: { type: String, trim: true },
     closetype: {
       type: String,
