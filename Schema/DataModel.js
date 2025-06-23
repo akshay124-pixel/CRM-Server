@@ -20,53 +20,56 @@ const historySchema = new mongoose.Schema({
   fourthPersonMeet: { type: String, trim: true },
 });
 
-const entrySchema = new mongoose.Schema({
-  customerName: { type: String, required: true, trim: true },
-  mobileNumber: {
-    type: String,
-    match: [/^\d{10}$/, "Mobile number must be 10 digits"],
-    trim: true,
+const entrySchema = new mongoose.Schema(
+  {
+    customerName: { type: String, required: true, trim: true },
+    mobileNumber: {
+      type: String,
+      match: [/^\d{10}$/, "Mobile number must be 10 digits"],
+      trim: true,
+    },
+    contactperson: { type: String, trim: true },
+    firstdate: { type: Date },
+    estimatedValue: { type: Number, min: 0 },
+    address: { type: String, trim: true },
+    state: { type: String, trim: true },
+    city: { type: String, trim: true },
+    organization: { type: String, trim: true },
+    type: { type: String, trim: true },
+    category: { type: String, trim: true },
+    products: [productSchema],
+    status: {
+      type: String,
+      required: true,
+      default: "Not Found",
+      enum: ["Not Found", "Maybe", "Interested", "Not Interested", "Closed"],
+    },
+    expectedClosingDate: { type: Date },
+    closeamount: { type: Number, min: 0 },
+    followUpDate: { type: Date },
+    remarks: { type: String, trim: true },
+    liveLocation: { type: String, required: true, trim: true },
+    nextAction: { type: String, trim: true },
+    closetype: {
+      type: String,
+      enum: ["Closed Won", "Closed Lost", ""],
+      default: "",
+    },
+    firstPersonMeet: { type: String, trim: true },
+    secondPersonMeet: { type: String, trim: true },
+    thirdPersonMeet: { type: String, trim: true },
+    fourthPersonMeet: { type: String, trim: true },
+    createdBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
+    },
+    assignedTo: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }], // Updated to array
+    history: [historySchema],
+    createdAt: { type: Date, default: Date.now },
+    updatedAt: { type: Date, default: Date.now },
   },
-  contactperson: { type: String, trim: true },
-  firstdate: { type: Date },
-  estimatedValue: { type: Number, min: 0 },
-  address: { type: String, trim: true },
-  state: { type: String, trim: true },
-  city: { type: String, trim: true },
-  organization: { type: String, trim: true },
-  type: { type: String, trim: true },
-  category: { type: String, trim: true },
-  products: [productSchema],
-  status: {
-    type: String,
-    required: true,
-    default: "Not Found",
-    enum: ["Not Found", "Maybe", "Interested", "Not Interested", "Closed"],
-  },
-  expectedClosingDate: { type: Date },
-  closeamount: { type: Number, min: 0 },
-  followUpDate: { type: Date },
-  remarks: { type: String, trim: true },
-  liveLocation: { type: String, required: true, trim: true },
-  nextAction: { type: String, trim: true },
-  closetype: {
-    type: String,
-    enum: ["Closed Won", "Closed Lost", ""],
-    default: "",
-  },
-  firstPersonMeet: { type: String, trim: true },
-  secondPersonMeet: { type: String, trim: true },
-  thirdPersonMeet: { type: String, trim: true },
-  fourthPersonMeet: { type: String, trim: true },
-  createdBy: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: "User",
-    required: true,
-  },
-  assignedTo: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }], // Updated to array
-  history: [historySchema],
-  createdAt: { type: Date, default: Date.now },
-  updatedAt: { type: Date, default: Date.now },
-});
+  { strict: false }
+);
 
 module.exports = mongoose.model("Entry", entrySchema);

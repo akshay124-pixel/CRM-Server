@@ -640,57 +640,145 @@ const editEntry = async (req, res) => {
 // Bulk Upload Stocks
 const bulkUploadStocks = async (req, res) => {
   try {
-    const newEntries = req.body;
+    console.log("Request body:", JSON.stringify(req.body, null, 2));
 
-    const entriesWithMetadata = newEntries.map((entry) => ({
-      ...entry,
-      createdBy: req.user.id,
-      createdAt: entry.Created_At ? new Date(entry.Created_At) : new Date(),
-      history: [
-        {
-          status: entry.Status || "Not Found",
-          remarks: entry.Remarks || "Bulk upload entry",
-          liveLocation: entry.liveLocation || null,
-          products: entry.products || [],
-          assignedTo: entry.Assigned_To || [],
-          timestamp: new Date(),
-        },
-      ],
-    }));
+    if (!req.user?.id) {
+      console.error("No authenticated user found");
+      return res
+        .status(401)
+        .json({ success: false, message: "User not authenticated" });
+    }
+
+    const newEntries = Array.isArray(req.body) ? req.body : [];
+
+    if (!newEntries.length) {
+      return res
+        .status(400)
+        .json({ success: false, message: "No entries provided" });
+    }
+
+    const entriesWithMetadata = newEntries.map((entry, index) => {
+      console.log(`Processing entry ${index}:`, JSON.stringify(entry, null, 2));
+
+      return {
+        customerName: entry.customerName || "",
+        mobileNumber: entry.mobileNumber ? String(entry.mobileNumber) : "",
+        contactperson: entry.contactperson || "",
+        address: entry.address || "",
+        state: entry.state || "",
+        city: entry.city || "",
+        organization: entry.organization || "",
+        category: entry.category || "",
+        type: entry.type || "",
+        status: entry.status || "Not Found",
+        closetype: entry.closetype || "",
+        estimatedValue: entry.estimatedValue ? Number(entry.estimatedValue) : 0,
+        closeamount: entry.closeamount ? Number(entry.closeamount) : 0,
+        remarks: entry.remarks || "",
+        liveLocation: entry.liveLocation || "",
+        nextAction: entry.nextAction || "",
+        firstPersonMeet: entry.firstPersonMeet || "",
+        secondPersonMeet: entry.secondPersonMeet || "",
+        thirdPersonMeet: entry.thirdPersonMeet || "",
+        fourthPersonMeet: entry.fourthPersonMeet || "",
+        expectedClosingDate: entry.expectedClosingDate
+          ? new Date(entry.expectedClosingDate)
+          : null,
+        followUpDate: entry.followUpDate ? new Date(entry.followUpDate) : null,
+        products: entry.products
+          ? Array.isArray(entry.products)
+            ? entry.products
+            : typeof entry.products === "string"
+            ? entry.products.split(",").map((v) => v.trim())
+            : []
+          : [],
+        assignedTo: entry.assignedTo
+          ? Array.isArray(entry.assignedTo)
+            ? entry.assignedTo
+            : typeof entry.assignedTo === "string"
+            ? entry.assignedTo.split(",").map((v) => v.trim())
+            : [entry.assignedTo]
+          : [],
+        createdBy: req.user.id, // Always set to authenticated user's ID
+        createdAt: new Date(),
+        history: [
+          {
+            status: entry.status || "Not Found",
+            remarks: entry.remarks || "Bulk upload entry",
+            liveLocation: entry.liveLocation || null,
+            products: entry.products
+              ? Array.isArray(entry.products)
+                ? entry.products
+                : typeof entry.products === "string"
+                ? entry.products.split(",").map((v) => v.trim())
+                : []
+              : [],
+            assignedTo: entry.assignedTo
+              ? Array.isArray(entry.assignedTo)
+                ? entry.assignedTo
+                : typeof entry.assignedTo === "string"
+                ? entry.assignedTo.split(",").map((v) => v.trim())
+                : [entry.assignedTo]
+              : [],
+            timestamp: new Date(),
+            firstPersonMeet: entry.firstPersonMeet || "",
+            secondPersonMeet: entry.secondPersonMeet || "",
+            thirdPersonMeet: entry.thirdPersonMeet || "",
+            fourthPersonMeet: entry.fourthPersonMeet || "",
+          },
+        ],
+      };
+    });
 
     const batchSize = 500;
+    let insertedCount = 0;
+    const errors = [];
+
     for (let i = 0; i < entriesWithMetadata.length; i += batchSize) {
       const batch = entriesWithMetadata.slice(i, i + batchSize);
-      const insertedEntries = await Entry.insertMany(batch, { ordered: false });
+      console.log(`Inserting batch of ${batch.length} entries`);
+      try {
+        const insertedEntries = await Entry.insertMany(batch, {
+          ordered: false,
+        });
+        insertedCount += insertedEntries.length;
 
-      for (const entry of insertedEntries) {
-        await createNotification(
-          req,
-          req.user.id,
-          `Bulk entry created: ${entry.customerName}`,
-          entry._id
-        );
-        for (const userId of entry.assignedTo || []) {
+        for (const entry of insertedEntries) {
           await createNotification(
             req,
-            userId,
-            `Assigned to bulk entry: ${entry.customerName}`,
+            req.user.id,
+            `Bulk entry created: ${entry.customerName || "Unknown"}`,
             entry._id
           );
+          for (const userId of entry.assignedTo || []) {
+            await createNotification(
+              req,
+              userId,
+              `Assigned to bulk entry: ${entry.customerName || "Unknown"}`,
+              entry._id
+            );
+          }
         }
+      } catch (batchError) {
+        console.error(`Batch ${i / batchSize + 1} error:`, batchError.message);
+        errors.push({ batch: i / batchSize + 1, error: batchError.message });
       }
     }
 
+    console.log(
+      `Inserted ${insertedCount} of ${entriesWithMetadata.length} entries`
+    );
     res.status(201).json({
       success: true,
-      message: "Entries uploaded successfully",
-      count: entriesWithMetadata.length,
+      message: `Uploaded ${insertedCount} entries`,
+      count: insertedCount,
+      errors: errors.length ? errors : null,
     });
   } catch (error) {
-    console.error("Error in bulk upload:", error);
-    res.status(400).json({
+    console.error("Bulk upload error:", error.message, error.stack);
+    res.status(500).json({
       success: false,
-      message: "Failed to upload entries",
+      message: "Failed to process entries",
       error: error.message,
     });
   }
