@@ -22,6 +22,7 @@ const {
   markNotificationsRead,
   clearNotifications,
   getCurrentUser,
+  exportAttendance,
 } = require("../Controller/DataLogic");
 
 router.post("/check-in", verifyToken, checkIn);
@@ -44,5 +45,5 @@ router.get("/current-user", verifyToken, getCurrentUser);
 router.get("/notifications", verifyToken, fetchNotifications);
 router.post("/notificationsread", verifyToken, markNotificationsRead);
 router.delete("/notificationsdelete", verifyToken, clearNotifications);
-
+router.get("/export-attendance", verifyToken, exportAttendance);
 module.exports = router;

@@ -1815,6 +1815,128 @@ const clearNotifications = async (req, res) => {
   }
 };
 
+const exportAttendance = async (req, res) => {
+  try {
+    if (!req.user?.id) {
+      return res.status(401).json({ success: false, message: "Unauthorized" });
+    }
+
+    const user = await User.findById(req.user.id);
+    if (!user) {
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
+    }
+
+    const { startDate, endDate } = req.query;
+
+    if (!startDate || !endDate) {
+      return res.status(400).json({
+        success: false,
+        message: "Start date and end date are required",
+      });
+    }
+
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+
+    if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid date format",
+      });
+    }
+
+    if (start > end) {
+      return res.status(400).json({
+        success: false,
+        message: "Start date cannot be later than end date",
+      });
+    }
+
+    let query = {
+      date: { $gte: start, $lte: end },
+    };
+
+    if (user.role === "superadmin") {
+      // No restrictions
+    } else if (user.role === "admin") {
+      const teamMembers = await User.find({
+        assignedAdmins: req.user.id,
+      }).select("_id");
+      const teamMemberIds = teamMembers.map((member) => member._id);
+      query.user = { $in: [req.user.id, ...teamMemberIds] };
+    } else {
+      query.user = req.user.id;
+    }
+
+    const attendance = await Attendance.find(query)
+      .populate("user", "username")
+      .sort({ date: -1 })
+      .lean();
+
+    if (!attendance.length) {
+      return res.status(404).json({
+        success: false,
+        message: "No attendance records found for the specified date range",
+      });
+    }
+
+    const formattedAttendance = attendance.map((record) => ({
+      Date: new Date(record.date).toLocaleDateString(),
+      Employee: record.user?.username || "Unknown",
+      Check_In: record.checkIn
+        ? new Date(record.checkIn).toLocaleTimeString()
+        : "N/A",
+      Check_Out: record.checkOut
+        ? new Date(record.checkOut).toLocaleTimeString()
+        : "N/A",
+      Status: record.status || "N/A",
+      Remarks: record.remarks || "N/A",
+      Check_In_Location: record.checkInLocation
+        ? `${record.checkInLocation.latitude}, ${record.checkInLocation.longitude}`
+        : "N/A",
+      Check_Out_Location: record.checkOutLocation
+        ? `${record.checkOutLocation.latitude}, ${record.checkOutLocation.longitude}`
+        : "N/A",
+    }));
+
+    const ws = XLSX.utils.json_to_sheet(formattedAttendance);
+    ws["!cols"] = [
+      { wch: 15 },
+      { wch: 20 },
+      { wch: 15 },
+      { wch: 15 },
+      { wch: 10 },
+      { wch: 30 },
+      { wch: 20 },
+      { wch: 20 },
+    ];
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Attendance");
+
+    const fileBuffer = XLSX.write(wb, { bookType: "xlsx", type: "buffer" });
+
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename=Attendance_${startDate}_to_${endDate}.xlsx`
+    );
+    res.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    );
+    res.send(fileBuffer);
+  } catch (error) {
+    console.error("Error exporting attendance:", error);
+    res.status(500).json({
+      success: false,
+      message: "Error exporting attendance",
+      error: error.message,
+    });
+  }
+};
+
 module.exports = {
   bulkUploadStocks,
   getUsersForTagging,
@@ -1824,6 +1946,7 @@ module.exports = {
   DeleteData,
   editEntry,
   exportentry,
+  exportAttendance,
   getAdmin,
   fetchUsers,
   assignUser,

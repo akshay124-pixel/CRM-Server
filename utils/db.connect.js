@@ -1,6 +1,6 @@
 const mongoose = require("mongoose");
 URI =
-   "mongodb+srv://promarkdatabase:promarkdatabase%401234@promarkdb.zfwjisc.mongodb.net/CRM_Data";
+  "mongodb+srv://promarkdatabase:promarkdatabase%401234@promarkdb.zfwjisc.mongodb.net/CRM_Data";
 
 const dbconnect = async () => {
   try {
