@@ -1883,7 +1883,7 @@ const exportAttendance = async (req, res) => {
     }
 
     const formattedAttendance = attendance.map((record) => ({
-      Date: new Date(record.date).toLocaleDateString(),
+      Date: new Date(record.date).toLocaleDateString("en-GB"),
       Employee: record.user?.username || "Unknown",
       Check_In: record.checkIn
         ? new Date(record.checkIn).toLocaleTimeString()
@@ -1893,12 +1893,6 @@ const exportAttendance = async (req, res) => {
         : "N/A",
       Status: record.status || "N/A",
       Remarks: record.remarks || "N/A",
-      Check_In_Location: record.checkInLocation
-        ? `${record.checkInLocation.latitude}, ${record.checkInLocation.longitude}`
-        : "N/A",
-      Check_Out_Location: record.checkOutLocation
-        ? `${record.checkOutLocation.latitude}, ${record.checkOutLocation.longitude}`
-        : "N/A",
     }));
 
     const ws = XLSX.utils.json_to_sheet(formattedAttendance);
@@ -1909,8 +1903,6 @@ const exportAttendance = async (req, res) => {
       { wch: 15 },
       { wch: 10 },
       { wch: 30 },
-      { wch: 20 },
-      { wch: 20 },
     ];
 
     const wb = XLSX.utils.book_new();
