@@ -1882,18 +1882,48 @@ const exportAttendance = async (req, res) => {
       });
     }
 
-    const formattedAttendance = attendance.map((record) => ({
-      Date: new Date(record.date).toLocaleDateString("en-GB"),
-      Employee: record.user?.username || "Unknown",
-      Check_In: record.checkIn
-        ? new Date(record.checkIn).toLocaleTimeString()
-        : "N/A",
-      Check_Out: record.checkOut
-        ? new Date(record.checkOut).toLocaleTimeString()
-        : "N/A",
-      Status: record.status || "N/A",
-      Remarks: record.remarks || "N/A",
-    }));
+    // Function to convert UTC date to IST
+    const toIST = (date) => {
+      const istOffset = 5.5 * 60 * 60 * 1000; // 5 hours 30 minutes in milliseconds
+      return new Date(date.getTime() + istOffset);
+    };
+
+    const formattedAttendance = attendance.map((record) => {
+      const dateIST = toIST(new Date(record.date));
+      const checkInIST = record.checkIn
+        ? toIST(new Date(record.checkIn))
+        : null;
+      const checkOutIST = record.checkOut
+        ? toIST(new Date(record.checkOut))
+        : null;
+
+      return {
+        Date: dateIST.toLocaleDateString("en-GB", {
+          day: "2-digit",
+          month: "2-digit",
+          year: "numeric",
+        }), // Formats as DD/MM/YYYY
+        Employee: record.user?.username || "Unknown",
+        Check_In: checkInIST
+          ? checkInIST.toLocaleTimeString("en-US", {
+              hour12: true,
+              hour: "numeric",
+              minute: "2-digit",
+              second: "2-digit",
+            })
+          : "N/A",
+        Check_Out: checkOutIST
+          ? checkOutIST.toLocaleTimeString("en-US", {
+              hour12: true,
+              hour: "numeric",
+              minute: "2-digit",
+              second: "2-digit",
+            })
+          : "N/A",
+        Status: record.status || "N/A",
+        Remarks: record.remarks || "N/A",
+      };
+    });
 
     const ws = XLSX.utils.json_to_sheet(formattedAttendance);
     ws["!cols"] = [
