@@ -1859,7 +1859,6 @@ const exportAttendance = async (req, res) => {
     };
 
     if (user.role === "superadmin") {
-      // No restrictions
     } else if (user.role === "admin") {
       const teamMembers = await User.find({
         assignedAdmins: req.user.id,
