@@ -16,7 +16,7 @@ const port = 4000;
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
-    origin: "http://localhost:3000",
+    origin: "https://crm-two-pi.vercel.app",
     methods: ["GET", "POST"],
     credentials: true,
   },
@@ -24,7 +24,7 @@ const io = new Server(server, {
 
 // CORS options
 const corsOptions = {
-  origin: "http://localhost:3000",
+  origin: "https://crm-two-pi.vercel.app",
   methods: "GET,HEAD,PUT,PATCH,POST,DELETE",
   credentials: true,
 };
