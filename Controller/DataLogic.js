@@ -1403,6 +1403,7 @@ const getCurrentUser = async (req, res) => {
 };
 
 // Check-in
+// checkIn endpoint
 const checkIn = async (req, res) => {
   try {
     if (!req.user?.id) {
@@ -1417,7 +1418,7 @@ const checkIn = async (req, res) => {
     }
 
     const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    today.setUTCHours(0, 0, 0, 0);
 
     const existingAttendance = await Attendance.findOne({
       user: req.user.id,
@@ -1427,7 +1428,7 @@ const checkIn = async (req, res) => {
       },
     });
 
-    if (existingAttendance && existingAttendance.checkIn) {
+    if (existingAttendance) {
       return res.status(400).json({
         success: false,
         message: "Already checked in today",
@@ -1460,7 +1461,7 @@ const checkIn = async (req, res) => {
     const attendance = new Attendance({
       user: req.user.id,
       date: today,
-      checkIn: new Date(),
+      checkIn: new Date().toISOString(),
       checkInLocation: { latitude, longitude },
       remarks: remarks?.trim() || null,
       status: "Present",
@@ -1471,7 +1472,7 @@ const checkIn = async (req, res) => {
     await createNotification(
       req,
       req.user.id,
-      `Checked in at ${new Date().toLocaleTimeString()}`,
+      `Checked in at ${new Date().toISOString()}`,
       null
     );
 
@@ -1482,7 +1483,16 @@ const checkIn = async (req, res) => {
     res.status(201).json({
       success: true,
       message: "Checked in successfully",
-      data: populatedAttendance,
+      data: {
+        ...populatedAttendance,
+        date: new Date(populatedAttendance.date).toISOString(),
+        checkIn: populatedAttendance.checkIn
+          ? new Date(populatedAttendance.checkIn).toISOString()
+          : null,
+        checkOut: populatedAttendance.checkOut
+          ? new Date(populatedAttendance.checkOut).toISOString()
+          : null,
+      },
     });
   } catch (error) {
     console.error("Check-in error:", error);
@@ -1493,8 +1503,7 @@ const checkIn = async (req, res) => {
     });
   }
 };
-
-// Check-out
+// checkOut endpoint
 const checkOut = async (req, res) => {
   try {
     if (!req.user?.id) {
@@ -1509,7 +1518,7 @@ const checkOut = async (req, res) => {
     }
 
     const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    today.setUTCHours(0, 0, 0, 0);
 
     const attendance = await Attendance.findOne({
       user: req.user.id,
@@ -1556,7 +1565,7 @@ const checkOut = async (req, res) => {
       });
     }
 
-    attendance.checkOut = new Date();
+    attendance.checkOut = new Date().toISOString();
     attendance.checkOutLocation = { latitude, longitude };
     attendance.remarks = remarks?.trim() || attendance.remarks || "";
     attendance.status = "Present";
@@ -1566,7 +1575,7 @@ const checkOut = async (req, res) => {
     await createNotification(
       req,
       req.user.id,
-      `Checked out at ${new Date().toLocaleTimeString()}`,
+      `Checked out at ${new Date().toISOString()}`,
       null
     );
 
@@ -1577,7 +1586,16 @@ const checkOut = async (req, res) => {
     res.status(200).json({
       success: true,
       message: "Checked out successfully",
-      data: populatedAttendance,
+      data: {
+        ...populatedAttendance,
+        date: new Date(populatedAttendance.date).toISOString(),
+        checkIn: populatedAttendance.checkIn
+          ? new Date(populatedAttendance.checkIn).toISOString()
+          : null,
+        checkOut: populatedAttendance.checkOut
+          ? new Date(populatedAttendance.checkOut).toISOString()
+          : null,
+      },
     });
   } catch (error) {
     console.error("Check-out error:", error);
@@ -1588,7 +1606,6 @@ const checkOut = async (req, res) => {
     });
   }
 };
-
 // Fetch attendance
 const fetchAttendance = async (req, res) => {
   try {
@@ -1623,7 +1640,9 @@ const fetchAttendance = async (req, res) => {
 
     if (startDate && endDate) {
       const start = new Date(startDate);
+      start.setUTCHours(0, 0, 0, 0);
       const end = new Date(endDate);
+      end.setUTCHours(23, 59, 59, 999);
 
       if (isNaN(start.getTime()) || isNaN(end.getTime())) {
         return res.status(400).json({
@@ -1654,20 +1673,34 @@ const fetchAttendance = async (req, res) => {
       query.user = req.user.id;
     }
 
+    console.log(
+      `Fetching attendance for user: ${req.user.id}, query: ${JSON.stringify(
+        query
+      )}`
+    );
+
     const skip = (pageNum - 1) * limitNum;
 
     const totalRecords = await Attendance.countDocuments(query);
+    console.log(`Total records: ${totalRecords}`);
 
     const attendance = await Attendance.find(query)
       .populate("user", "username")
-      .sort({ date: -1 })
+      .sort({ date: -1, _id: -1 }) // Sort by date and _id to ensure consistent order
       .skip(skip)
       .limit(limitNum)
       .lean();
 
+    console.log(`Fetched records: ${JSON.stringify(attendance)}`);
+
     const formattedAttendance = attendance.map((record) => ({
       ...record,
       user: record.user || { username: "Unknown" },
+      date: record.date ? new Date(record.date).toISOString() : null,
+      checkIn: record.checkIn ? new Date(record.checkIn).toISOString() : null,
+      checkOut: record.checkOut
+        ? new Date(record.checkOut).toISOString()
+        : null,
     }));
 
     res.status(200).json({
@@ -1817,6 +1850,7 @@ const clearNotifications = async (req, res) => {
 
 const exportAttendance = async (req, res) => {
   try {
+    // Authenticate user
     if (!req.user?.id) {
       return res.status(401).json({ success: false, message: "Unauthorized" });
     }
@@ -1828,6 +1862,7 @@ const exportAttendance = async (req, res) => {
         .json({ success: false, message: "User not found" });
     }
 
+    // Validate query parameters
     const { startDate, endDate } = req.query;
 
     if (!startDate || !endDate) {
@@ -1838,7 +1873,9 @@ const exportAttendance = async (req, res) => {
     }
 
     const start = new Date(startDate);
+    start.setUTCHours(0, 0, 0, 0);
     const end = new Date(endDate);
+    end.setUTCHours(23, 59, 59, 999);
 
     if (isNaN(start.getTime()) || isNaN(end.getTime())) {
       return res.status(400).json({
@@ -1854,11 +1891,13 @@ const exportAttendance = async (req, res) => {
       });
     }
 
+    // Build query based on user role
     let query = {
       date: { $gte: start, $lte: end },
     };
 
     if (user.role === "superadmin") {
+      // No restrictions
     } else if (user.role === "admin") {
       const teamMembers = await User.find({
         assignedAdmins: req.user.id,
@@ -1869,9 +1908,12 @@ const exportAttendance = async (req, res) => {
       query.user = req.user.id;
     }
 
+    console.log(`Exporting attendance with query: ${JSON.stringify(query)}`);
+
+    // Fetch attendance records
     const attendance = await Attendance.find(query)
       .populate("user", "username")
-      .sort({ date: -1 })
+      .sort({ date: -1, _id: -1 }) // Preserve duplicates with consistent sorting
       .lean();
 
     if (!attendance.length) {
@@ -1881,27 +1923,46 @@ const exportAttendance = async (req, res) => {
       });
     }
 
-    // Function to convert UTC date to IST
-    const toIST = (date) => {
-      const istOffset = 5.5 * 60 * 60 * 1000; // 5 hours 30 minutes in milliseconds
-      return new Date(date.getTime() + istOffset);
+    // Function to format date and time in IST
+    const formatInIST = (date) => {
+      if (!date || isNaN(new Date(date).getTime())) {
+        console.warn(`Invalid date: ${date}`);
+        return null;
+      }
+      return new Date(date);
     };
 
+    // Format attendance data for Excel
     const formattedAttendance = attendance.map((record) => {
-      const dateIST = toIST(new Date(record.date));
-      const checkInIST = record.checkIn
-        ? toIST(new Date(record.checkIn))
-        : null;
-      const checkOutIST = record.checkOut
-        ? toIST(new Date(record.checkOut))
-        : null;
+      const dateIST = formatInIST(record.date);
+      const checkInIST = record.checkIn ? formatInIST(record.checkIn) : null;
+      const checkOutIST = record.checkOut ? formatInIST(record.checkOut) : null;
+
+      // Log raw and formatted times for debugging
+      console.log(`Record ID: ${record._id}`);
+      console.log(
+        `Raw date: ${record.date}, Formatted date: ${dateIST?.toISOString()}`
+      );
+      console.log(
+        `Raw checkIn: ${
+          record.checkIn
+        }, Formatted checkIn: ${checkInIST?.toISOString()}`
+      );
+      console.log(
+        `Raw checkOut: ${
+          record.checkOut
+        }, Formatted checkOut: ${checkOutIST?.toISOString()}`
+      );
 
       return {
-        Date: dateIST.toLocaleDateString("en-GB", {
-          day: "2-digit",
-          month: "2-digit",
-          year: "numeric",
-        }), // Formats as DD/MM/YYYY
+        Date: dateIST
+          ? dateIST.toLocaleDateString("en-GB", {
+              day: "2-digit",
+              month: "2-digit",
+              year: "numeric",
+              timeZone: "Asia/Kolkata", // Explicitly set to IST
+            }) // Formats as DD/MM/YYYY
+          : "N/A",
         Employee: record.user?.username || "Unknown",
         Check_In: checkInIST
           ? checkInIST.toLocaleTimeString("en-US", {
@@ -1909,6 +1970,7 @@ const exportAttendance = async (req, res) => {
               hour: "numeric",
               minute: "2-digit",
               second: "2-digit",
+              timeZone: "Asia/Kolkata", // Explicitly set to IST
             })
           : "N/A",
         Check_Out: checkOutIST
@@ -1917,6 +1979,7 @@ const exportAttendance = async (req, res) => {
               hour: "numeric",
               minute: "2-digit",
               second: "2-digit",
+              timeZone: "Asia/Kolkata", // Explicitly set to IST
             })
           : "N/A",
         Status: record.status || "N/A",
@@ -1924,19 +1987,22 @@ const exportAttendance = async (req, res) => {
       };
     });
 
+    // Create Excel worksheet
     const ws = XLSX.utils.json_to_sheet(formattedAttendance);
     ws["!cols"] = [
-      { wch: 15 },
-      { wch: 20 },
-      { wch: 15 },
-      { wch: 15 },
-      { wch: 10 },
-      { wch: 30 },
+      { wch: 15 }, // Date
+      { wch: 20 }, // Employee
+      { wch: 15 }, // Check_In
+      { wch: 15 }, // Check_Out
+      { wch: 10 }, // Status
+      { wch: 30 }, // Remarks
     ];
 
+    // Create Excel workbook
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Attendance");
 
+    // Generate and send file
     const fileBuffer = XLSX.write(wb, { bookType: "xlsx", type: "buffer" });
 
     res.setHeader(
@@ -1957,7 +2023,6 @@ const exportAttendance = async (req, res) => {
     });
   }
 };
-
 module.exports = {
   bulkUploadStocks,
   getUsersForTagging,
