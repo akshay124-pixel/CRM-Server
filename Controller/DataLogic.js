@@ -259,25 +259,16 @@ const DataentryLogic = async (req, res) => {
 // Fetch Entries
 const fetchEntries = async (req, res) => {
   try {
-    if (!req.user || !req.user.id || !req.user.role) {
-      return res.status(401).json({
-        success: false,
-        message: "Unauthorized: User not authenticated",
-      });
-    }
-
     let entries = [];
-    const userId = mongoose.Types.ObjectId(req.user.id);
 
     if (req.user.role === "superadmin") {
       entries = await Entry.find()
         .populate("createdBy", "username role assignedAdmins")
         .populate("assignedTo", "username role assignedAdmins")
-        .populate("history.assignedTo", "username")
         .lean();
     } else if (req.user.role === "admin") {
       const teamMembers = await User.find({
-        assignedAdmins: userId,
+        assignedAdmins: req.user.id,
       }).select("_id role");
       let teamMemberIds = teamMembers.map((member) => member._id);
 
@@ -296,53 +287,27 @@ const fetchEntries = async (req, res) => {
 
       entries = await Entry.find({
         $or: [
-          { createdBy: userId },
+          { createdBy: req.user.id },
           { createdBy: { $in: teamMemberIds } },
-          { assignedTo: userId },
+          { assignedTo: req.user.id },
           { assignedTo: { $in: teamMemberIds } },
         ],
       })
         .populate("createdBy", "username role assignedAdmins")
         .populate("assignedTo", "username role assignedAdmins")
-        .populate("history.assignedTo", "username")
         .lean();
     } else {
       entries = await Entry.find({
-        $or: [{ createdBy: userId }, { assignedTo: userId }],
+        $or: [{ createdBy: req.user.id }, { assignedTo: req.user.id }],
       })
         .populate("createdBy", "username role assignedAdmins")
         .populate("assignedTo", "username role assignedAdmins")
-        .populate("history.assignedTo", "username")
         .lean();
     }
 
-    // Ensure history is always an array and handle null/undefined fields
-    entries = entries.map((entry) => ({
-      ...entry,
-      history: Array.isArray(entry.history) ? entry.history : [],
-      createdBy: entry.createdBy || { username: "Unknown", role: "N/A" },
-      assignedTo: Array.isArray(entry.assignedTo)
-        ? entry.assignedTo
-        : entry.assignedTo || { username: "Unassigned", role: "N/A" },
-    }));
-
-    console.log(`Fetched ${entries.length} entries for user ${req.user.id}`); // Debug log
-    entries.forEach((entry, index) => {
-      console.log(`Entry ${index + 1}:`, {
-        customerName: entry.customerName || "N/A",
-        historyCount: entry.history.length,
-        history: entry.history.map((h) => ({
-          status: h.status || "N/A",
-          assignedTo: Array.isArray(h.assignedTo)
-            ? h.assignedTo.map((u) => u.username || "N/A")
-            : h.assignedTo?.username || "Unassigned",
-        })),
-      });
-    });
-
     res.status(200).json(entries);
   } catch (error) {
-    console.error("Error fetching entries:", error.message, error.stack);
+    console.error("Error fetching entries:", error);
     res.status(500).json({
       success: false,
       message: "Failed to fetch entries",
