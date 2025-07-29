@@ -265,7 +265,6 @@ const fetchEntries = async (req, res) => {
       entries = await Entry.find()
         .populate("createdBy", "username role assignedAdmins")
         .populate("assignedTo", "username role assignedAdmins")
-        .populate("history.assignedTo", "username") // Populate history.assignedTo
         .lean();
     } else if (req.user.role === "admin") {
       const teamMembers = await User.find({
@@ -296,7 +295,6 @@ const fetchEntries = async (req, res) => {
       })
         .populate("createdBy", "username role assignedAdmins")
         .populate("assignedTo", "username role assignedAdmins")
-        .populate("history.assignedTo", "username") // Populate history.assignedTo
         .lean();
     } else {
       entries = await Entry.find({
@@ -304,7 +302,6 @@ const fetchEntries = async (req, res) => {
       })
         .populate("createdBy", "username role assignedAdmins")
         .populate("assignedTo", "username role assignedAdmins")
-        .populate("history.assignedTo", "username") // Populate history.assignedTo
         .lean();
     }
 
