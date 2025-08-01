@@ -1620,7 +1620,17 @@ const fetchAttendance = async (req, res) => {
         .json({ success: false, message: "User not found" });
     }
 
-    const { page = 1, limit = 10, startDate, endDate, userId } = req.query;
+    const {
+      page = 1,
+      limit = 10,
+      startDate,
+      endDate,
+      selectedUserId,
+    } = req.query;
+    console.log(
+      "Received attendance request with selectedUserId:",
+      selectedUserId
+    );
     const pageNum = parseInt(page, 10);
     const limitNum = parseInt(limit, 10);
 
@@ -1661,53 +1671,42 @@ const fetchAttendance = async (req, res) => {
       query.date = { $gte: start, $lte: end };
     }
 
-    // Handle userId filter
-    if (userId) {
-      if (!mongoose.Types.ObjectId.isValid(userId)) {
-        return res.status(400).json({
-          success: false,
-          message: "Invalid userId format",
-        });
-      }
-
-      const filterUser = await User.findById(userId);
-      if (!filterUser) {
-        return res.status(404).json({
-          success: false,
-          message: "Filtered user not found",
-        });
-      }
-
+    // Apply user filter if selectedUserId is provided
+    if (selectedUserId) {
       if (user.role === "superadmin") {
-        query.user = userId;
+        // Superadmin can filter by any user
+        query.user = selectedUserId;
       } else if (user.role === "admin") {
+        // Admin can only filter by their team members or themselves
         const teamMembers = await User.find({
           assignedAdmins: req.user.id,
         }).select("_id");
-        const teamMemberIds = teamMembers.map((member) =>
-          member._id.toString()
-        );
-        if (!teamMemberIds.includes(userId) && userId !== req.user.id) {
+        const teamMemberIds = teamMembers.map((member) => member._id);
+        const allowedUserIds = [req.user.id, ...teamMemberIds];
+
+        if (allowedUserIds.includes(selectedUserId)) {
+          query.user = selectedUserId;
+        } else {
           return res.status(403).json({
             success: false,
-            message: "Unauthorized to view this user's attendance",
+            message: "You can only filter by your team members",
           });
         }
-        query.user = userId;
       } else {
-        // Non-admin users can only view their own attendance
-        if (userId !== req.user.id) {
+        // Regular users can only filter by themselves
+        if (selectedUserId === req.user.id) {
+          query.user = selectedUserId;
+        } else {
           return res.status(403).json({
             success: false,
-            message: "Unauthorized to view other users' attendance",
+            message: "You can only filter by your own attendance",
           });
         }
-        query.user = req.user.id;
       }
     } else {
-      // No userId provided, apply role-based filtering
+      // If no selectedUserId, apply role-based restrictions
       if (user.role === "superadmin") {
-        // No restrictions
+        // No restrictions for superadmin
       } else if (user.role === "admin") {
         const teamMembers = await User.find({
           assignedAdmins: req.user.id,
@@ -1908,7 +1907,7 @@ const exportAttendance = async (req, res) => {
     }
 
     // Validate query parameters
-    const { startDate, endDate, userId } = req.query;
+    const { startDate, endDate, selectedUserId } = req.query;
 
     if (!startDate || !endDate) {
       return res.status(400).json({
@@ -1936,57 +1935,47 @@ const exportAttendance = async (req, res) => {
       });
     }
 
-    // Build query based on user role and userId filter
+    // Build query based on user role and selectedUserId
     let query = {
       date: { $gte: start, $lte: end },
     };
 
-    if (userId) {
-      if (!mongoose.Types.ObjectId.isValid(userId)) {
-        return res.status(400).json({
-          success: false,
-          message: "Invalid userId format",
-        });
-      }
-
-      const filterUser = await User.findById(userId);
-      if (!filterUser) {
-        return res.status(404).json({
-          success: false,
-          message: "Filtered user not found",
-        });
-      }
-
+    // Apply user filter if selectedUserId is provided
+    if (selectedUserId) {
       if (user.role === "superadmin") {
-        query.user = userId;
+        // Superadmin can filter by any user
+        query.user = selectedUserId;
       } else if (user.role === "admin") {
+        // Admin can only filter by their team members or themselves
         const teamMembers = await User.find({
           assignedAdmins: req.user.id,
         }).select("_id");
-        const teamMemberIds = teamMembers.map((member) =>
-          member._id.toString()
-        );
-        if (!teamMemberIds.includes(userId) && userId !== req.user.id) {
+        const teamMemberIds = teamMembers.map((member) => member._id);
+        const allowedUserIds = [req.user.id, ...teamMemberIds];
+
+        if (allowedUserIds.includes(selectedUserId)) {
+          query.user = selectedUserId;
+        } else {
           return res.status(403).json({
             success: false,
-            message: "Unauthorized to export this user's attendance",
+            message: "You can only filter by your team members",
           });
         }
-        query.user = userId;
       } else {
-        // Non-admin users can only export their own attendance
-        if (userId !== req.user.id) {
+        // Regular users can only filter by themselves
+        if (selectedUserId === req.user.id) {
+          query.user = selectedUserId;
+        } else {
           return res.status(403).json({
             success: false,
-            message: "Unauthorized to export other users' attendance",
+            message: "You can only filter by your own attendance",
           });
         }
-        query.user = req.user.id;
       }
     } else {
-      // No userId provided, apply role-based filtering
+      // If no selectedUserId, apply role-based restrictions
       if (user.role === "superadmin") {
-        // No restrictions
+        // No restrictions for superadmin
       } else if (user.role === "admin") {
         const teamMembers = await User.find({
           assignedAdmins: req.user.id,
