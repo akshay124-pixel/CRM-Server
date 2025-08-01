@@ -1620,7 +1620,7 @@ const fetchAttendance = async (req, res) => {
         .json({ success: false, message: "User not found" });
     }
 
-    const { page = 1, limit = 10, startDate, endDate } = req.query;
+    const { page = 1, limit = 10, startDate, endDate, userId } = req.query;
     const pageNum = parseInt(page, 10);
     const limitNum = parseInt(limit, 10);
 
@@ -1661,16 +1661,62 @@ const fetchAttendance = async (req, res) => {
       query.date = { $gte: start, $lte: end };
     }
 
-    if (user.role === "superadmin") {
-      // No restrictions
-    } else if (user.role === "admin") {
-      const teamMembers = await User.find({
-        assignedAdmins: req.user.id,
-      }).select("_id");
-      const teamMemberIds = teamMembers.map((member) => member._id);
-      query.user = { $in: [req.user.id, ...teamMemberIds] };
+    // Handle userId filter
+    if (userId) {
+      if (!mongoose.Types.ObjectId.isValid(userId)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid userId format",
+        });
+      }
+
+      const filterUser = await User.findById(userId);
+      if (!filterUser) {
+        return res.status(404).json({
+          success: false,
+          message: "Filtered user not found",
+        });
+      }
+
+      if (user.role === "superadmin") {
+        query.user = userId;
+      } else if (user.role === "admin") {
+        const teamMembers = await User.find({
+          assignedAdmins: req.user.id,
+        }).select("_id");
+        const teamMemberIds = teamMembers.map((member) =>
+          member._id.toString()
+        );
+        if (!teamMemberIds.includes(userId) && userId !== req.user.id) {
+          return res.status(403).json({
+            success: false,
+            message: "Unauthorized to view this user's attendance",
+          });
+        }
+        query.user = userId;
+      } else {
+        // Non-admin users can only view their own attendance
+        if (userId !== req.user.id) {
+          return res.status(403).json({
+            success: false,
+            message: "Unauthorized to view other users' attendance",
+          });
+        }
+        query.user = req.user.id;
+      }
     } else {
-      query.user = req.user.id;
+      // No userId provided, apply role-based filtering
+      if (user.role === "superadmin") {
+        // No restrictions
+      } else if (user.role === "admin") {
+        const teamMembers = await User.find({
+          assignedAdmins: req.user.id,
+        }).select("_id");
+        const teamMemberIds = teamMembers.map((member) => member._id);
+        query.user = { $in: [req.user.id, ...teamMemberIds] };
+      } else {
+        query.user = req.user.id;
+      }
     }
 
     console.log(
@@ -1722,7 +1768,6 @@ const fetchAttendance = async (req, res) => {
     });
   }
 };
-
 // Fetch notifications
 const fetchNotifications = async (req, res) => {
   try {
@@ -1863,7 +1908,7 @@ const exportAttendance = async (req, res) => {
     }
 
     // Validate query parameters
-    const { startDate, endDate } = req.query;
+    const { startDate, endDate, userId } = req.query;
 
     if (!startDate || !endDate) {
       return res.status(400).json({
@@ -1891,21 +1936,66 @@ const exportAttendance = async (req, res) => {
       });
     }
 
-    // Build query based on user role
+    // Build query based on user role and userId filter
     let query = {
       date: { $gte: start, $lte: end },
     };
 
-    if (user.role === "superadmin") {
-      // No restrictions
-    } else if (user.role === "admin") {
-      const teamMembers = await User.find({
-        assignedAdmins: req.user.id,
-      }).select("_id");
-      const teamMemberIds = teamMembers.map((member) => member._id);
-      query.user = { $in: [req.user.id, ...teamMemberIds] };
+    if (userId) {
+      if (!mongoose.Types.ObjectId.isValid(userId)) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid userId format",
+        });
+      }
+
+      const filterUser = await User.findById(userId);
+      if (!filterUser) {
+        return res.status(404).json({
+          success: false,
+          message: "Filtered user not found",
+        });
+      }
+
+      if (user.role === "superadmin") {
+        query.user = userId;
+      } else if (user.role === "admin") {
+        const teamMembers = await User.find({
+          assignedAdmins: req.user.id,
+        }).select("_id");
+        const teamMemberIds = teamMembers.map((member) =>
+          member._id.toString()
+        );
+        if (!teamMemberIds.includes(userId) && userId !== req.user.id) {
+          return res.status(403).json({
+            success: false,
+            message: "Unauthorized to export this user's attendance",
+          });
+        }
+        query.user = userId;
+      } else {
+        // Non-admin users can only export their own attendance
+        if (userId !== req.user.id) {
+          return res.status(403).json({
+            success: false,
+            message: "Unauthorized to export other users' attendance",
+          });
+        }
+        query.user = req.user.id;
+      }
     } else {
-      query.user = req.user.id;
+      // No userId provided, apply role-based filtering
+      if (user.role === "superadmin") {
+        // No restrictions
+      } else if (user.role === "admin") {
+        const teamMembers = await User.find({
+          assignedAdmins: req.user.id,
+        }).select("_id");
+        const teamMemberIds = teamMembers.map((member) => member._id);
+        query.user = { $in: [req.user.id, ...teamMemberIds] };
+      } else {
+        query.user = req.user.id;
+      }
     }
 
     console.log(`Exporting attendance with query: ${JSON.stringify(query)}`);
