@@ -1952,8 +1952,11 @@ const exportAttendance = async (req, res) => {
         }).select("_id");
         const teamMemberIds = teamMembers.map((member) => member._id);
         const allowedUserIds = [req.user.id, ...teamMemberIds];
-
-        if (allowedUserIds.includes(selectedUserId)) {
+        if (
+          allowedUserIds
+            .map((id) => id.toString())
+            .includes(selectedUserId.toString())
+        ) {
           query.user = selectedUserId;
         } else {
           return res.status(403).json({
