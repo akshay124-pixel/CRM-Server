@@ -1684,14 +1684,19 @@ const fetchAttendance = async (req, res) => {
         const teamMemberIds = teamMembers.map((member) => member._id);
         const allowedUserIds = [req.user.id, ...teamMemberIds];
 
-        if (allowedUserIds.includes(selectedUserId)) {
-          query.user = selectedUserId;
-        } else {
-          return res.status(403).json({
-            success: false,
-            message: "You can only filter by your team members",
-          });
-        }
+       if (
+         allowedUserIds
+           .map((id) => id.toString())
+           .includes(selectedUserId.toString())
+       ) {
+         query.user = selectedUserId;
+       } else {
+         return res.status(403).json({
+           success: false,
+           message: "You can only filter by your team members",
+         });
+       }
+
       } else {
         // Regular users can only filter by themselves
         if (selectedUserId === req.user.id) {
