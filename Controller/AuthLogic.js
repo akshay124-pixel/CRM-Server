@@ -1,8 +1,98 @@
-// AuthRoute.js
 const User = require("../Schema/Model");
 const bcrypt = require("bcrypt");
 const { generateToken } = require("../utils/config jwt");
 
+const ChangePassword = async (req, res) => {
+  try {
+    const { currentPassword, newPassword, email } = req.body;
+    const userId = req.user.id; // From JWT middleware
+
+    console.log("ChangePassword: Request received", { userId, email });
+
+    if (!currentPassword || !newPassword || !email) {
+      return res
+        .status(400)
+        .json({ success: false, message: "All fields are required" });
+    }
+
+    // Check if new password is same as current
+    if (currentPassword === newPassword) {
+      return res.status(400).json({
+        success: false,
+        message: "New password must be different from current password",
+      });
+    }
+
+    // Password complexity validation
+    const passwordRegex =
+      /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/;
+    if (!passwordRegex.test(newPassword)) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "New password must be at least 8 characters long and include uppercase, lowercase, number, and special character",
+      });
+    }
+
+    const user = await User.findById(userId);
+    if (!user) {
+      console.log("ChangePassword: User not found", { userId });
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
+    }
+
+    // Verify email matches the authenticated user
+    if (user.email !== email) {
+      console.log("ChangePassword: Email mismatch", { 
+        providedEmail: email, 
+        userEmail: user.email 
+      });
+      return res.status(403).json({
+        success: false,
+        message: "Email does not match authenticated user",
+      });
+    }
+
+    const isMatch = await bcrypt.compare(currentPassword, user.password);
+    if (!isMatch) {
+      console.log("ChangePassword: Current password incorrect for user", { userId });
+      return res
+        .status(401)
+        .json({ success: false, message: "Current password is incorrect" });
+    }
+
+    const hashedNewPassword = await bcrypt.hash(newPassword, 10);
+    user.password = hashedNewPassword;
+    user.lastPasswordChange = new Date(); // Track password change timestamp
+    await user.save();
+
+    console.log("ChangePassword: Password changed successfully for user", { userId });
+
+    // Emit Socket.IO event for audit logging
+    const io = req.app.get("io");
+    if (io) {
+      io.to(userId.toString()).emit("passwordChange", {
+        userId,
+        email,
+        timestamp: new Date(),
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Password changed successfully",
+    });
+  } catch (error) {
+    console.error("Change Password Error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "An error occurred while changing password",
+    });
+  }
+};
+
+// Existing Signup and Login functions remain unchanged
 const Signup = async (req, res) => {
   try {
     const { username, email, password, role } = req.body;
@@ -104,4 +194,4 @@ const Login = async (req, res) => {
   }
 };
 
-module.exports = { Signup, Login };
+module.exports = { Signup, Login, ChangePassword };

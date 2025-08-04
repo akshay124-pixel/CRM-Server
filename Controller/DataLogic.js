@@ -1403,7 +1403,6 @@ const getCurrentUser = async (req, res) => {
 };
 
 // Check-in
-// checkIn endpoint
 const checkIn = async (req, res) => {
   try {
     if (!req.user?.id) {
