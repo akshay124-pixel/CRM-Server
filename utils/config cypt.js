@@ -1,2 +1,3 @@
-const secretKey = "My_CRM";
+require("dotenv").config();
+const secretKey = process.env.SECRET_KEY;
 module.exports = secretKey;
