@@ -1,3 +1,4 @@
+require("dotenv").config();
 const express = require("express");
 const dbconnect = require("./utils/db.connect");
 const cors = require("cors");
@@ -10,13 +11,13 @@ const http = require("http");
 const { verifyToken } = require("./utils/config jwt");
 
 const app = express();
-const port = 4000;
+const port = process.env.APP_PORT;
 
 // Create HTTP server and attach Socket.IO
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
-    origin: "https://crm-two-pi.vercel.app",
+    origin: `${process.env.API_URL}`,
     methods: ["GET", "POST"],
     credentials: true,
   },
@@ -24,7 +25,7 @@ const io = new Server(server, {
 
 // CORS options
 const corsOptions = {
-  origin: "https://crm-two-pi.vercel.app",
+  origin: `${process.env.API_URL}`,
   methods: "GET,HEAD,PUT,PATCH,POST,DELETE",
   credentials: true,
 };
@@ -40,7 +41,7 @@ app.use("/api", DataRoute);
 app.use("/api", tokenRoutes);
 
 // Socket.IO Authentication and Connection Handling
-// Replace the existing io.use block with this
+
 io.use((socket, next) => {
   const token = socket.handshake.auth.token;
   if (!token) {
