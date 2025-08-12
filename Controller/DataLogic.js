@@ -248,10 +248,25 @@ const DataentryLogic = async (req, res) => {
     });
   } catch (error) {
     console.error("Error in DataentryLogic:", error);
+
+    let userMessage =
+      "Something went wrong on our side. Please try again later.";
+
+    // Customize message for known error cases
+    if (error.message.includes("Cast to ObjectId failed")) {
+      userMessage =
+        "There was an issue with the provided user or entry ID. Please refresh and try again.";
+    } else if (error.message.includes("validation failed")) {
+      userMessage =
+        "Some data entered is invalid or missing. Please check your input and try again.";
+    } else if (error.message.includes("duplicate")) {
+      userMessage = "This entry already exists.";
+    }
+
     res.status(500).json({
       success: false,
-      message: "Internal server error",
-      error: error.message,
+      message: userMessage,
+      error: process.env.NODE_ENV === "development" ? error.message : undefined,
     });
   }
 };
@@ -376,11 +391,13 @@ const DeleteData = async (req, res) => {
       .status(200)
       .json({ success: true, message: "Entry deleted successfully" });
   } catch (error) {
-    console.error("Error deleting entry:", error);
+    console.error("Error fetching entries:", error);
     res.status(500).json({
       success: false,
-      message: "Failed to delete entry",
-      error: error.message,
+      message:
+        "Sorry, we are unable to load the entries right now. Please try again later.",
+      // Optionally, include error details only in dev mode:
+      // error: process.env.NODE_ENV === 'development' ? error.message : undefined,
     });
   }
 };
@@ -625,14 +642,16 @@ const editEntry = async (req, res) => {
       }));
       return res.status(400).json({
         success: false,
-        message: "Validation failed",
+        message:
+          "Some input values are invalid. Please review and correct them.",
         errors,
       });
     }
     res.status(500).json({
       success: false,
-      message: "Error updating entry",
-      error: error.message,
+      message:
+        "Oops! Something went wrong while updating the entry. Please try again later.",
+      // error: error.message,
     });
   }
 };
@@ -951,8 +970,10 @@ const fetchAllUsers = async (req, res) => {
     console.error("Error fetching all users:", error);
     res.status(500).json({
       success: false,
-      message: "Failed to fetch users",
-      error: error.message,
+      message:
+        "Oops! We encountered an issue while fetching users. Please try again later.",
+      // For security, avoid exposing raw error to users
+      // error: error.message,
     });
   }
 };
@@ -983,8 +1004,9 @@ const getAdmin = async (req, res) => {
     console.error("Error fetching user:", error);
     res.status(500).json({
       success: false,
-      message: "Internal server error",
-      error: error.message,
+      message:
+        "Something went wrong while fetching your information. Please try again later.",
+      // error: error.message, // Hide internal error from users
     });
   }
 };
@@ -1029,8 +1051,9 @@ const fetchUsers = async (req, res) => {
     console.error("Error fetching users:", error);
     res.status(500).json({
       success: false,
-      message: "Failed to fetch users",
-      error: error.message,
+      message:
+        "Oops! Something went wrong while fetching users. Please try again later.",
+      // error: error.message,
     });
   }
 };
@@ -1139,8 +1162,9 @@ const fetchTeam = async (req, res) => {
     console.error("Error fetching team:", error);
     res.status(500).json({
       success: false,
-      message: "Failed to fetch team",
-      error: error.message,
+      message:
+        "Sorry, we couldn't retrieve the team information right now. Please try again later or contact support if the issue continues.",
+      // error: error.message,
     });
   }
 };
@@ -1157,8 +1181,9 @@ const getUsersForTagging = async (req, res) => {
     console.error("Error fetching users for tagging:", error);
     res.status(500).json({
       success: false,
-      message: "Failed to fetch users for tagging",
-      error: error.message,
+      message:
+        "Oops! We couldn't load the user list for tagging right now. Please try again later or contact support if the problem continues.",
+      // error: error.message,
     });
   }
 };
@@ -1254,8 +1279,9 @@ const assignUser = async (req, res) => {
     console.error("Error assigning user:", error);
     res.status(500).json({
       success: false,
-      message: "Failed to assign user",
-      error: error.message,
+      message:
+        "Sorry, we couldn't assign the user right now. Please try again later or contact support if this issue continues.",
+      // error: error.message,
     });
   }
 };
@@ -1357,8 +1383,9 @@ const unassignUser = async (req, res) => {
     console.error("Error unassigning user:", error);
     res.status(500).json({
       success: false,
-      message: "Failed to unassign user",
-      error: error.message,
+      message:
+        "Sorry, we couldn't complete the unassignment right now. Please try again later or contact support if this keeps happening.",
+      // error: error.message,
     });
   }
 };
@@ -1396,8 +1423,9 @@ const getCurrentUser = async (req, res) => {
     console.error("Error fetching current user:", error);
     res.status(500).json({
       success: false,
-      message: "Failed to fetch current user",
-      error: error.message,
+      message:
+        "Sorry, we couldn't retrieve your user information right now. Please try again later or contact support if the issue continues.",
+      // error: error.message,
     });
   }
 };
@@ -1406,14 +1434,18 @@ const getCurrentUser = async (req, res) => {
 const checkIn = async (req, res) => {
   try {
     if (!req.user?.id) {
-      return res.status(401).json({ success: false, message: "Unauthorized" });
+      return res.status(401).json({
+        success: false,
+        message: "You need to be logged in to check in.",
+      });
     }
 
     const user = await User.findById(req.user.id);
     if (!user) {
-      return res
-        .status(404)
-        .json({ success: false, message: "User not found" });
+      return res.status(404).json({
+        success: false,
+        message: "User not found. Please contact support.",
+      });
     }
 
     const today = new Date();
@@ -1430,7 +1462,7 @@ const checkIn = async (req, res) => {
     if (existingAttendance) {
       return res.status(400).json({
         success: false,
-        message: "Already checked in today",
+        message: "You have already checked in today.",
       });
     }
 
@@ -1443,7 +1475,7 @@ const checkIn = async (req, res) => {
     ) {
       return res.status(400).json({
         success: false,
-        message: "Valid check-in location required",
+        message: "Please provide a valid check-in location.",
       });
     }
 
@@ -1453,7 +1485,7 @@ const checkIn = async (req, res) => {
     if (isNaN(latitude) || isNaN(longitude)) {
       return res.status(400).json({
         success: false,
-        message: "Valid coordinates required",
+        message: "Invalid coordinates provided for location.",
       });
     }
 
@@ -1497,8 +1529,9 @@ const checkIn = async (req, res) => {
     console.error("Check-in error:", error);
     res.status(500).json({
       success: false,
-      message: "Failed to check in",
-      error: error.message,
+      message:
+        "Oops! We couldn't complete your check-in at the moment. Please try again shortly, or contact support if the problem persists.",
+      // error: error.message,
     });
   }
 };
@@ -1506,14 +1539,18 @@ const checkIn = async (req, res) => {
 const checkOut = async (req, res) => {
   try {
     if (!req.user?.id) {
-      return res.status(401).json({ success: false, message: "Unauthorized" });
+      return res.status(401).json({
+        success: false,
+        message: "You need to be logged in to check out.",
+      });
     }
 
     const user = await User.findById(req.user.id);
     if (!user) {
-      return res
-        .status(404)
-        .json({ success: false, message: "User not found" });
+      return res.status(404).json({
+        success: false,
+        message: "User not found. Please contact support.",
+      });
     }
 
     const today = new Date();
@@ -1530,14 +1567,14 @@ const checkOut = async (req, res) => {
     if (!attendance) {
       return res.status(400).json({
         success: false,
-        message: "No check-in record found",
+        message: "No check-in found for today. Please check in first.",
       });
     }
 
     if (attendance.checkOut) {
       return res.status(400).json({
         success: false,
-        message: "Already checked out",
+        message: "You have already checked out today.",
       });
     }
 
@@ -1550,7 +1587,7 @@ const checkOut = async (req, res) => {
     ) {
       return res.status(400).json({
         success: false,
-        message: "Valid check-out location required",
+        message: "Please provide a valid location to check out.",
       });
     }
 
@@ -1560,7 +1597,7 @@ const checkOut = async (req, res) => {
     if (isNaN(latitude) || isNaN(longitude)) {
       return res.status(400).json({
         success: false,
-        message: "Valid coordinates required",
+        message: "Invalid coordinates provided for location.",
       });
     }
 
@@ -1600,8 +1637,9 @@ const checkOut = async (req, res) => {
     console.error("Check-out error:", error);
     res.status(500).json({
       success: false,
-      message: "Failed to check out",
-      error: error.message,
+      message:
+        "Oops! Something went wrong while checking you out. Please try again later or contact support if the issue persists.",
+      // error: error.message,
     });
   }
 };
@@ -1683,19 +1721,18 @@ const fetchAttendance = async (req, res) => {
         const teamMemberIds = teamMembers.map((member) => member._id);
         const allowedUserIds = [req.user.id, ...teamMemberIds];
 
-       if (
-         allowedUserIds
-           .map((id) => id.toString())
-           .includes(selectedUserId.toString())
-       ) {
-         query.user = selectedUserId;
-       } else {
-         return res.status(403).json({
-           success: false,
-           message: "You can only filter by your team members",
-         });
-       }
-
+        if (
+          allowedUserIds
+            .map((id) => id.toString())
+            .includes(selectedUserId.toString())
+        ) {
+          query.user = selectedUserId;
+        } else {
+          return res.status(403).json({
+            success: false,
+            message: "You can only filter by your team members",
+          });
+        }
       } else {
         // Regular users can only filter by themselves
         if (selectedUserId === req.user.id) {
@@ -1766,8 +1803,9 @@ const fetchAttendance = async (req, res) => {
     console.error("Fetch attendance error:", error);
     res.status(500).json({
       success: false,
-      message: "Failed to fetch attendance",
-      error: error.message,
+      message:
+        "Sorry, we couldn’t load attendance data at this time. Please try again later or contact support if the issue persists.",
+      // error: error.message,
     });
   }
 };
@@ -2104,8 +2142,9 @@ const exportAttendance = async (req, res) => {
     console.error("Error exporting attendance:", error);
     res.status(500).json({
       success: false,
-      message: "Error exporting attendance",
-      error: error.message,
+      message:
+        "Sorry, something went wrong while exporting attendance. Please try again later or contact support.",
+      // error: error.message,
     });
   }
 };
