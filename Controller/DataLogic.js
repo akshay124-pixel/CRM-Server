@@ -672,13 +672,28 @@ const bulkUploadStocks = async (req, res) => {
         .json({ success: false, message: "No entries provided" });
     }
 
+    // Helper to safely parse stringified array (e.g., "['a','b']") to array of strings
+    const parseStringifiedArray = (value) => {
+      if (!value) return [];
+      if (Array.isArray(value)) return value;
+      if (typeof value === "string") {
+        try {
+          const parsed = JSON.parse(value.replace(/'/g, '"')); // Replace single with double quotes for valid JSON
+          if (Array.isArray(parsed)) return parsed;
+        } catch {
+          // fallback: try splitting by commas for comma separated strings
+          return value.split(",").map((v) => v.trim());
+        }
+      }
+      return [];
+    };
+
     const transformProducts = (products) => {
-      if (!Array.isArray(products)) return [];
-      return products.map((p) => {
-        if (typeof p === "object" && p !== null) return p;
-        // Create product object with default fields
+      const arr = parseStringifiedArray(products);
+      return arr.map((p) => {
+        if (p && typeof p === "object" && p.name) return p; // already object form
         return {
-          name: String(p),
+          name: p,
           specification: "",
           size: "",
           quantity: 1,
@@ -686,57 +701,62 @@ const bulkUploadStocks = async (req, res) => {
       });
     };
 
-    const entriesWithMetadata = newEntries.map((entry) => {
-      // Validate mobileNumber 10 digits else empty
-      let mobile = "";
-      if (entry.mobileNumber && /^\d{10}$/.test(entry.mobileNumber))
-        mobile = entry.mobileNumber;
+    const transformAssignedTo = (assignedTo) => {
+      const arr = parseStringifiedArray(assignedTo);
+      // You may want to validate ObjectId format here if possible
+      return arr;
+    };
 
-      return {
-        customerName: entry.customerName || "",
-        mobileNumber: mobile,
-        contactperson: entry.contactperson || "",
-        address: entry.address || "",
-        state: entry.state || "",
-        city: entry.city || "",
-        organization: entry.organization || "",
-        category: entry.category || "",
-        type: entry.type || "",
-        status: entry.status || "Not Found",
-        closetype: entry.closetype || "",
-        estimatedValue: entry.estimatedValue ? Number(entry.estimatedValue) : 0,
-        closeamount: entry.closeamount ? Number(entry.closeamount) : 0,
-        remarks: entry.remarks || "",
-        liveLocation: entry.liveLocation || "",
-        nextAction: entry.nextAction || "",
-        firstPersonMeet: entry.firstPersonMeet || "",
-        secondPersonMeet: entry.secondPersonMeet || "",
-        thirdPersonMeet: entry.thirdPersonMeet || "",
-        fourthPersonMeet: entry.fourthPersonMeet || "",
-        expectedClosingDate: entry.expectedClosingDate
-          ? new Date(entry.expectedClosingDate)
-          : null,
-        followUpDate: entry.followUpDate ? new Date(entry.followUpDate) : null,
-        products: transformProducts(entry.products),
-        assignedTo: Array.isArray(entry.assignedTo) ? entry.assignedTo : [],
-        createdBy: req.user.id,
-        createdAt: new Date(),
-        history: [
-          {
-            status: entry.status || "Not Found",
-            remarks: entry.remarks || "Bulk upload entry",
-            liveLocation: entry.liveLocation || null,
-            products: transformProducts(entry.products),
-            assignedTo: Array.isArray(entry.assignedTo) ? entry.assignedTo : [],
-            timestamp: new Date(),
-            firstPersonMeet: entry.firstPersonMeet || "",
-            secondPersonMeet: entry.secondPersonMeet || "",
-            thirdPersonMeet: entry.thirdPersonMeet || "",
-            fourthPersonMeet: entry.fourthPersonMeet || "",
-          },
-        ],
-      };
-    });
+    const cleanMobileNumber = (num) => {
+      if (!num) return "";
+      let str = String(num).replace(/\D/g, ""); // remove non-digits
+      return str.length === 10 ? str : "";
+    };
+
+    const entriesWithMetadata = newEntries.map((entry) => ({
+      customerName: entry.customerName || "",
+      contactperson: entry.contactperson || "",
+      address: entry.address || "",
+      state: entry.state || "",
+      city: entry.city || "",
+      organization: entry.organization || "",
+      category: entry.category || "",
+      type: entry.type || "",
+      status: entry.status || "Not Found",
+      closetype: entry.closetype || "",
+      estimatedValue: entry.estimatedValue ? Number(entry.estimatedValue) : 0,
+      closeamount: entry.closeamount ? Number(entry.closeamount) : 0,
+      remarks: entry.remarks || "",
+      liveLocation: entry.liveLocation || "",
+      nextAction: entry.nextAction || "",
+      firstPersonMeet: entry.firstPersonMeet || "",
+      secondPersonMeet: entry.secondPersonMeet || "",
+      thirdPersonMeet: entry.thirdPersonMeet || "",
+      fourthPersonMeet: entry.fourthPersonMeet || "",
+      expectedClosingDate: entry.expectedClosingDate
+        ? new Date(entry.expectedClosingDate)
+        : null,
+      followUpDate: entry.followUpDate ? new Date(entry.followUpDate) : null,
+      products: transformProducts(entry.products),
+      assignedTo: transformAssignedTo(entry.assignedTo),
+      mobileNumber: cleanMobileNumber(entry.mobileNumber),
+      createdBy: req.user.id,
+      createdAt: new Date(),
+      history: [
+        {
+          status: entry.status || "Not Found",
+          remarks: entry.remarks || "Bulk upload entry",
+          liveLocation: entry.liveLocation || null,
+          products: transformProducts(entry.products),
+          assignedTo: transformAssignedTo(entry.assignedTo),
+          timestamp: new Date(),
+          firstPersonMeet: entry.firstPersonMeet || "",
+          secondPersonMeet: entry.secondPersonMeet || "",
+          thirdPersonMeet: entry.thirdPersonMeet || "",
+          fourthPersonMeet: entry.fourthPersonMeet || "",
+        },
+      ],
+    }));
 
     const batchSize = 500;
     let insertedCount = 0;
