@@ -659,29 +659,42 @@ const editEntry = async (req, res) => {
 // Bulk Upload Stocks
 const bulkUploadStocks = async (req, res) => {
   try {
-    console.log("Request body:", JSON.stringify(req.body, null, 2));
-
     if (!req.user?.id) {
-      console.error("No authenticated user found");
       return res
         .status(401)
         .json({ success: false, message: "User not authenticated" });
     }
 
     const newEntries = Array.isArray(req.body) ? req.body : [];
-
     if (!newEntries.length) {
       return res
         .status(400)
         .json({ success: false, message: "No entries provided" });
     }
 
-    const entriesWithMetadata = newEntries.map((entry, index) => {
-      console.log(`Processing entry ${index}:`, JSON.stringify(entry, null, 2));
+    const transformProducts = (products) => {
+      if (!Array.isArray(products)) return [];
+      return products.map((p) => {
+        if (typeof p === "object" && p !== null) return p;
+        // Create product object with default fields
+        return {
+          name: String(p),
+          specification: "",
+          size: "",
+          quantity: 1,
+        };
+      });
+    };
+
+    const entriesWithMetadata = newEntries.map((entry) => {
+      // Validate mobileNumber 10 digits else empty
+      let mobile = "";
+      if (entry.mobileNumber && /^\d{10}$/.test(entry.mobileNumber))
+        mobile = entry.mobileNumber;
 
       return {
         customerName: entry.customerName || "",
-        mobileNumber: entry.mobileNumber ? String(entry.mobileNumber) : "",
+        mobileNumber: mobile,
         contactperson: entry.contactperson || "",
         address: entry.address || "",
         state: entry.state || "",
@@ -704,41 +717,17 @@ const bulkUploadStocks = async (req, res) => {
           ? new Date(entry.expectedClosingDate)
           : null,
         followUpDate: entry.followUpDate ? new Date(entry.followUpDate) : null,
-        products: entry.products
-          ? Array.isArray(entry.products)
-            ? entry.products
-            : typeof entry.products === "string"
-            ? entry.products.split(",").map((v) => v.trim())
-            : []
-          : [],
-        assignedTo: entry.assignedTo
-          ? Array.isArray(entry.assignedTo)
-            ? entry.assignedTo
-            : typeof entry.assignedTo === "string"
-            ? entry.assignedTo.split(",").map((v) => v.trim())
-            : [entry.assignedTo]
-          : [],
-        createdBy: req.user.id, // Always set to authenticated user's ID
+        products: transformProducts(entry.products),
+        assignedTo: Array.isArray(entry.assignedTo) ? entry.assignedTo : [],
+        createdBy: req.user.id,
         createdAt: new Date(),
         history: [
           {
             status: entry.status || "Not Found",
             remarks: entry.remarks || "Bulk upload entry",
             liveLocation: entry.liveLocation || null,
-            products: entry.products
-              ? Array.isArray(entry.products)
-                ? entry.products
-                : typeof entry.products === "string"
-                ? entry.products.split(",").map((v) => v.trim())
-                : []
-              : [],
-            assignedTo: entry.assignedTo
-              ? Array.isArray(entry.assignedTo)
-                ? entry.assignedTo
-                : typeof entry.assignedTo === "string"
-                ? entry.assignedTo.split(",").map((v) => v.trim())
-                : [entry.assignedTo]
-              : [],
+            products: transformProducts(entry.products),
+            assignedTo: Array.isArray(entry.assignedTo) ? entry.assignedTo : [],
             timestamp: new Date(),
             firstPersonMeet: entry.firstPersonMeet || "",
             secondPersonMeet: entry.secondPersonMeet || "",
@@ -755,38 +744,17 @@ const bulkUploadStocks = async (req, res) => {
 
     for (let i = 0; i < entriesWithMetadata.length; i += batchSize) {
       const batch = entriesWithMetadata.slice(i, i + batchSize);
-      console.log(`Inserting batch of ${batch.length} entries`);
       try {
         const insertedEntries = await Entry.insertMany(batch, {
           ordered: false,
         });
         insertedCount += insertedEntries.length;
-
-        for (const entry of insertedEntries) {
-          await createNotification(
-            req,
-            req.user.id,
-            `Bulk entry created: ${entry.customerName || "Unknown"}`,
-            entry._id
-          );
-          for (const userId of entry.assignedTo || []) {
-            await createNotification(
-              req,
-              userId,
-              `Assigned to bulk entry: ${entry.customerName || "Unknown"}`,
-              entry._id
-            );
-          }
-        }
       } catch (batchError) {
         console.error(`Batch ${i / batchSize + 1} error:`, batchError.message);
         errors.push({ batch: i / batchSize + 1, error: batchError.message });
       }
     }
 
-    console.log(
-      `Inserted ${insertedCount} of ${entriesWithMetadata.length} entries`
-    );
     res.status(201).json({
       success: true,
       message: `Uploaded ${insertedCount} entries`,
