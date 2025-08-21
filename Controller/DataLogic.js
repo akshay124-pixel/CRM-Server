@@ -659,7 +659,20 @@ const editEntry = async (req, res) => {
 // Bulk Upload Stocks
 const bulkUploadStocks = async (req, res) => {
   try {
+    // Check MongoDB connection
+    if (mongoose.connection.readyState !== 1) {
+      console.error(
+        "MongoDB not connected, state:",
+        mongoose.connection.readyState
+      );
+      return res.status(500).json({
+        success: false,
+        message: "Database connection error",
+      });
+    }
+
     if (!req.user?.id) {
+      console.error("No authenticated user found");
       return res
         .status(401)
         .json({ success: false, message: "User not authenticated" });
@@ -672,118 +685,183 @@ const bulkUploadStocks = async (req, res) => {
         .json({ success: false, message: "No entries provided" });
     }
 
-    // Helper to safely parse stringified array (e.g., "['a','b']") to array of strings
-    const parseStringifiedArray = (value) => {
-      if (!value) return [];
-      if (Array.isArray(value)) return value;
-      if (typeof value === "string") {
-        try {
-          const parsed = JSON.parse(value.replace(/'/g, '"')); // Replace single with double quotes for valid JSON
-          if (Array.isArray(parsed)) return parsed;
-        } catch {
-          // fallback: try splitting by commas for comma separated strings
-          return value.split(",").map((v) => v.trim());
+    const entriesWithMetadata = [];
+    const errors = [];
+
+    for (const [index, entry] of newEntries.entries()) {
+      try {
+        console.log(
+          `Processing entry ${index}:`,
+          JSON.stringify(entry, null, 2)
+        );
+
+        // Validate mobile number
+        if (entry.mobileNumber && !/^\d{10}$/.test(entry.mobileNumber)) {
+          throw new Error(`Invalid mobile number: ${entry.mobileNumber}`);
         }
-      }
-      return [];
-    };
 
-    const transformProducts = (products) => {
-      const arr = parseStringifiedArray(products);
-      return arr.map((p) => {
-        if (p && typeof p === "object" && p.name) return p; // already object form
-        return {
-          name: p,
-          specification: "",
-          size: "",
-          quantity: 1,
-        };
-      });
-    };
+        // Validate products
+        const products = Array.isArray(entry.products)
+          ? entry.products.map((p) => ({
+              name: String(p.name || ""),
+              specification: String(p.specification || ""),
+              size: String(p.size || ""),
+              quantity: Number(p.quantity || 1),
+            }))
+          : [];
 
-    const transformAssignedTo = (assignedTo) => {
-      const arr = parseStringifiedArray(assignedTo);
-      // You may want to validate ObjectId format here if possible
-      return arr;
-    };
+        // Validate dates
+        const expectedClosingDate = entry.expectedClosingDate
+          ? new Date(entry.expectedClosingDate)
+          : null;
+        if (expectedClosingDate && isNaN(expectedClosingDate.getTime())) {
+          throw new Error(
+            `Invalid expectedClosingDate: ${entry.expectedClosingDate}`
+          );
+        }
 
-    const cleanMobileNumber = (num) => {
-      if (!num) return "";
-      let str = String(num).replace(/\D/g, ""); // remove non-digits
-      return str.length === 10 ? str : "";
-    };
+        const followUpDate = entry.followUpDate
+          ? new Date(entry.followUpDate)
+          : null;
+        if (followUpDate && isNaN(followUpDate.getTime())) {
+          throw new Error(`Invalid followUpDate: ${entry.followUpDate}`);
+        }
 
-    const entriesWithMetadata = newEntries.map((entry) => ({
-      customerName: entry.customerName || "",
-      contactperson: entry.contactperson || "",
-      address: entry.address || "",
-      state: entry.state || "",
-      city: entry.city || "",
-      organization: entry.organization || "",
-      category: entry.category || "",
-      type: entry.type || "",
-      status: entry.status || "Not Found",
-      closetype: entry.closetype || "",
-      estimatedValue: entry.estimatedValue ? Number(entry.estimatedValue) : 0,
-      closeamount: entry.closeamount ? Number(entry.closeamount) : 0,
-      remarks: entry.remarks || "",
-      liveLocation: entry.liveLocation || "",
-      nextAction: entry.nextAction || "",
-      firstPersonMeet: entry.firstPersonMeet || "",
-      secondPersonMeet: entry.secondPersonMeet || "",
-      thirdPersonMeet: entry.thirdPersonMeet || "",
-      fourthPersonMeet: entry.fourthPersonMeet || "",
-      expectedClosingDate: entry.expectedClosingDate
-        ? new Date(entry.expectedClosingDate)
-        : null,
-      followUpDate: entry.followUpDate ? new Date(entry.followUpDate) : null,
-      products: transformProducts(entry.products),
-      assignedTo: transformAssignedTo(entry.assignedTo),
-      mobileNumber: cleanMobileNumber(entry.mobileNumber),
-      createdBy: req.user.id,
-      createdAt: new Date(),
-      history: [
-        {
+        // Validate assignedTo (ensure valid ObjectIds)
+        const assignedTo = Array.isArray(entry.assignedTo)
+          ? entry.assignedTo.filter((id) => mongoose.Types.ObjectId.isValid(id))
+          : [];
+
+        const formattedEntry = {
+          customerName: String(entry.customerName || ""),
+          mobileNumber: String(entry.mobileNumber || ""),
+          contactperson: String(entry.contactperson || ""),
+          address: String(entry.address || ""),
+          state: String(entry.state || ""),
+          city: String(entry.city || ""),
+          organization: String(entry.organization || ""),
+          category: String(entry.category || ""),
+          type: String(entry.type || ""),
           status: entry.status || "Not Found",
-          remarks: entry.remarks || "Bulk upload entry",
-          liveLocation: entry.liveLocation || null,
-          products: transformProducts(entry.products),
-          assignedTo: transformAssignedTo(entry.assignedTo),
-          timestamp: new Date(),
-          firstPersonMeet: entry.firstPersonMeet || "",
-          secondPersonMeet: entry.secondPersonMeet || "",
-          thirdPersonMeet: entry.thirdPersonMeet || "",
-          fourthPersonMeet: entry.fourthPersonMeet || "",
-        },
-      ],
-    }));
+          closetype: entry.closetype || "",
+          estimatedValue: Number(entry.estimatedValue || 0),
+          closeamount: Number(entry.closeamount || 0),
+          remarks: String(entry.remarks || ""),
+          liveLocation: String(entry.liveLocation || ""),
+          nextAction: String(entry.nextAction || ""),
+          firstPersonMeet: String(entry.firstPersonMeet || ""),
+          secondPersonMeet: String(entry.secondPersonMeet || ""),
+          thirdPersonMeet: String(entry.thirdPersonMeet || ""),
+          fourthPersonMeet: String(entry.fourthPersonMeet || ""),
+          expectedClosingDate,
+          followUpDate,
+          products,
+          assignedTo,
+          createdBy: req.user.id,
+          createdAt: new Date(),
+          history: [
+            {
+              status: entry.status || "Not Found",
+              remarks: entry.remarks || "Bulk upload entry",
+              liveLocation: entry.liveLocation || null,
+              products,
+              assignedTo,
+              timestamp: new Date(),
+              firstPersonMeet: String(entry.firstPersonMeet || ""),
+              secondPersonMeet: String(entry.secondPersonMeet || ""),
+              thirdPersonMeet: String(entry.thirdPersonMeet || ""),
+              fourthPersonMeet: String(entry.fourthPersonMeet || ""),
+            },
+          ],
+        };
+
+        // Validate with Mongoose schema
+        const entryDoc = new Entry(formattedEntry);
+        await entryDoc.validate();
+
+        entriesWithMetadata.push(formattedEntry);
+      } catch (validationError) {
+        console.error(
+          `Validation error for entry ${index}:`,
+          validationError.message
+        );
+        errors.push({ entryIndex: index, error: validationError.message });
+      }
+    }
+
+    if (!entriesWithMetadata.length) {
+      return res.status(400).json({
+        success: false,
+        message: "No valid entries to upload",
+        errors,
+      });
+    }
 
     const batchSize = 500;
     let insertedCount = 0;
-    const errors = [];
 
     for (let i = 0; i < entriesWithMetadata.length; i += batchSize) {
       const batch = entriesWithMetadata.slice(i, i + batchSize);
+      console.log(`Inserting batch of ${batch.length} entries`);
       try {
         const insertedEntries = await Entry.insertMany(batch, {
           ordered: false,
+          rawResult: true,
         });
-        insertedCount += insertedEntries.length;
+
+        console.log(
+          "InsertMany result:",
+          JSON.stringify(insertedEntries, null, 2)
+        );
+        insertedCount +=
+          insertedEntries.insertedCount || insertedEntries.length || 0;
+
+        // Process notifications
+        for (const entry of insertedEntries.ops || []) {
+          try {
+            await createNotification(
+              req,
+              req.user.id,
+              `Bulk entry created: ${entry.customerName || "Unknown"}`,
+              entry._id
+            );
+            for (const userId of entry.assignedTo || []) {
+              await createNotification(
+                req,
+                userId,
+                `Assigned to bulk entry: ${entry.customerName || "Unknown"}`,
+                entry._id
+              );
+            }
+          } catch (notificationError) {
+            console.error(
+              `Notification error for entry ${entry._id}:`,
+              notificationError.message
+            );
+            errors.push({
+              entry: entry._id,
+              error: `Notification failed: ${notificationError.message}`,
+            });
+          }
+        }
       } catch (batchError) {
         console.error(`Batch ${i / batchSize + 1} error:`, batchError.message);
         errors.push({ batch: i / batchSize + 1, error: batchError.message });
       }
     }
 
-    res.status(201).json({
-      success: true,
+    console.log(
+      `Inserted ${insertedCount} of ${entriesWithMetadata.length} entries`
+    );
+    return res.status(201).json({
+      success: insertedCount > 0,
       message: `Uploaded ${insertedCount} entries`,
       count: insertedCount,
       errors: errors.length ? errors : null,
     });
   } catch (error) {
     console.error("Bulk upload error:", error.message, error.stack);
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: "Failed to process entries",
       error: error.message,
