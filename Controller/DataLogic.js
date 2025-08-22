@@ -1405,13 +1405,33 @@ const unassignUser = async (req, res) => {
       user.assignedAdmins.includes(req.user.id) ||
       (!assignedBySuperAdmin && req.user.role === "admin")
     ) {
+      const isForceUnassign =
+        req.user.role === "superadmin" &&
+        !user.assignedAdmins.includes(req.user.id);
+
+      if (isForceUnassign) {
+        user.assignedAdmins = [];
+      } else {
+        user.assignedAdmins = user.assignedAdmins.filter(
+          (id) => id.toString() !== req.user.id
+        );
+      }
+
       if (user.role === "admin") {
-        // Unassign the admin's team
+        // Unassign the admin's team appropriately
         const teamMembers = await User.find({ assignedAdmins: user._id });
         for (const teamMember of teamMembers) {
-          teamMember.assignedAdmins = teamMember.assignedAdmins.filter(
-            (id) => id.toString() !== req.user.id
-          );
+          if (isForceUnassign) {
+            // For force unassign, remove the sub-admin (user._id) from team member's assignedAdmins
+            teamMember.assignedAdmins = teamMember.assignedAdmins.filter(
+              (id) => id.toString() !== user._id.toString()
+            );
+          } else {
+            // Normal case: remove the top-level admin (req.user.id) from team member's assignedAdmins
+            teamMember.assignedAdmins = teamMember.assignedAdmins.filter(
+              (id) => id.toString() !== req.user.id
+            );
+          }
           await teamMember.save();
           await createNotification(
             req,
@@ -1422,10 +1442,6 @@ const unassignUser = async (req, res) => {
         }
       }
 
-      // Unassign the user
-      user.assignedAdmins = user.assignedAdmins.filter(
-        (id) => id.toString() !== req.user.id
-      );
       await user.save();
 
       await createNotification(
@@ -1455,7 +1471,6 @@ const unassignUser = async (req, res) => {
     });
   }
 };
-
 // Get current user
 const getCurrentUser = async (req, res) => {
   try {
