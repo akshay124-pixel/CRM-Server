@@ -23,11 +23,14 @@ const {
   clearNotifications,
   getCurrentUser,
   exportAttendance,
+  markLeave,
 } = require("../Controller/DataLogic");
 
 router.post("/check-in", verifyToken, checkIn);
 router.post("/check-out", verifyToken, checkOut);
 router.get("/attendance", verifyToken, fetchAttendance);
+router.post("/leave", verifyToken, markLeave);
+
 router.get("/allusers", verifyToken, fetchAllUsers);
 router.post("/entry", verifyToken, DataentryLogic);
 router.get("/fetch-entry", verifyToken, fetchEntries);
