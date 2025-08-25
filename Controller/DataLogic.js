@@ -2063,10 +2063,13 @@ const exportAttendance = async (req, res) => {
       date: { $gte: start, $lte: end },
     };
 
+    // Apply user filter if selectedUserId is provided
     if (selectedUserId) {
       if (user.role === "superadmin") {
+        // Superadmin can filter by any user
         query.user = selectedUserId;
       } else if (user.role === "admin") {
+        // Admin can only filter by their team members or themselves
         const teamMembers = await User.find({
           assignedAdmins: req.user.id,
         }).select("_id");
@@ -2085,6 +2088,7 @@ const exportAttendance = async (req, res) => {
           });
         }
       } else {
+        // Regular users can only filter by themselves
         if (selectedUserId === req.user.id) {
           query.user = selectedUserId;
         } else {
@@ -2095,6 +2099,7 @@ const exportAttendance = async (req, res) => {
         }
       }
     } else {
+      // If no selectedUserId, apply role-based restrictions
       if (user.role === "superadmin") {
         // No restrictions for superadmin
       } else if (user.role === "admin") {
@@ -2108,10 +2113,12 @@ const exportAttendance = async (req, res) => {
       }
     }
 
+    console.log(`Exporting attendance with query: ${JSON.stringify(query)}`);
+
     // Fetch attendance records
     const attendance = await Attendance.find(query)
       .populate("user", "username")
-      .sort({ date: -1, _id: -1 })
+      .sort({ date: -1, _id: -1 }) // Preserve duplicates with consistent sorting
       .lean();
 
     if (!attendance.length) {
@@ -2121,95 +2128,91 @@ const exportAttendance = async (req, res) => {
       });
     }
 
-    // Prepare date headers
-    const dates = [];
-    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
-      dates.push(new Date(d));
-    }
-
-    // Pivot attendance data
-    const userIds = [
-      ...new Set(attendance.map((a) => a.user?._id).filter((id) => id)),
-    ];
-    const users = await User.find({ _id: { $in: userIds } }).select("username");
-    const attendanceData = {};
-    attendance.forEach((record) => {
-      if (record.user && record.user._id) {
-        const dateKey = record.date.toISOString().split("T")[0];
-        if (!attendanceData[record.user._id]) {
-          attendanceData[record.user._id] = {};
-        }
-        attendanceData[record.user._id][dateKey] = record.status || "NA";
+    // Function to format date and time in IST
+    const formatInIST = (date) => {
+      if (!date || isNaN(new Date(date).getTime())) {
+        console.warn(`Invalid date: ${date}`);
+        return null;
       }
-    });
+      return new Date(date);
+    };
 
-    // Create worksheet data
-    const wsData = [
-      [
-        "No",
-        "Name",
-        ...dates.map((d) =>
-          d.toLocaleDateString("en-GB", { day: "2-digit", month: "short" })
-        ),
-      ],
-    ];
-    users.forEach((user, index) => {
-      const row = [index + 1, user.username];
-      dates.forEach((date) => {
-        const dateKey = date.toISOString().split("T")[0];
-        const status = attendanceData[user._id]?.[dateKey] || "NA";
-        row.push(status);
-      });
-      wsData.push(row);
+    // Format attendance data for Excel
+    const formattedAttendance = attendance.map((record) => {
+      const dateIST = formatInIST(record.date);
+      const checkInIST = record.checkIn ? formatInIST(record.checkIn) : null;
+      const checkOutIST = record.checkOut ? formatInIST(record.checkOut) : null;
+
+      // Log raw and formatted times for debugging
+      console.log(`Record ID: ${record._id}`);
+      console.log(
+        `Raw date: ${record.date}, Formatted date: ${dateIST?.toISOString()}`
+      );
+      console.log(
+        `Raw checkIn: ${
+          record.checkIn
+        }, Formatted checkIn: ${checkInIST?.toISOString()}`
+      );
+      console.log(
+        `Raw checkOut: ${
+          record.checkOut
+        }, Formatted checkOut: ${checkOutIST?.toISOString()}`
+      );
+
+      return {
+        Date: dateIST
+          ? dateIST.toLocaleDateString("en-GB", {
+              day: "2-digit",
+              month: "2-digit",
+              year: "numeric",
+              timeZone: "Asia/Kolkata", // Explicitly set to IST
+            }) // Formats as DD/MM/YYYY
+          : "N/A",
+        Employee: record.user?.username || "Unknown",
+        Check_In: checkInIST
+          ? checkInIST.toLocaleTimeString("en-US", {
+              hour12: true,
+              hour: "numeric",
+              minute: "2-digit",
+              second: "2-digit",
+              timeZone: "Asia/Kolkata", // Explicitly set to IST
+            })
+          : "N/A",
+        Check_Out: checkOutIST
+          ? checkOutIST.toLocaleTimeString("en-US", {
+              hour12: true,
+              hour: "numeric",
+              minute: "2-digit",
+              second: "2-digit",
+              timeZone: "Asia/Kolkata", // Explicitly set to IST
+            })
+          : "N/A",
+        Status: record.status || "N/A",
+        Remarks: record.remarks || "N/A",
+      };
     });
 
     // Create Excel worksheet
-    const ws = XLSX.utils.aoa_to_sheet(wsData);
-
-    // Apply conditional formatting
-    const range = XLSX.utils.decode_range(ws["!ref"]);
-    for (let row = 1; row <= range.e.r; row++) {
-      for (let col = 2; col <= range.e.c; col++) {
-        const cellAddress = XLSX.utils.encode_cell({ r: row, c: col });
-        if (!ws[cellAddress]) continue;
-        const status = ws[cellAddress].v;
-        if (status === "NA") {
-          ws[cellAddress].s = { fill: { fgColor: { rgb: "FFF2CC" } } }; // Light orange
-        } else if (status === "L") {
-          ws[cellAddress].s = { fill: { fgColor: { rgb: "F4B084" } } }; // Orange
-        }
-      }
-    }
-    // Highlight Sundays
-    dates.forEach((date, colIdx) => {
-      if (date.getDay() === 0) {
-        const col = colIdx + 2; // Offset by 2 (No and Name columns)
-        for (let row = 1; row <= range.e.r; row++) {
-          const cellAddress = XLSX.utils.encode_cell({ r: row, c: col });
-          if (ws[cellAddress]) {
-            ws[cellAddress].s = { fill: { fgColor: { rgb: "C6EFCE" } } }; // Green
-          }
-        }
-      }
-    });
-
-    // Set column widths
+    const ws = XLSX.utils.json_to_sheet(formattedAttendance);
     ws["!cols"] = [
-      { wch: 5 }, // No
-      { wch: 20 }, // Name
-      ...dates.map(() => ({ wch: 10 })), // Dates
+      { wch: 15 }, // Date
+      { wch: 20 }, // Employee
+      { wch: 15 }, // Check_In
+      { wch: 15 }, // Check_Out
+      { wch: 10 }, // Status
+      { wch: 30 }, // Remarks
     ];
 
     // Create Excel workbook
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "TEAM-PUNJAB");
+    XLSX.utils.book_append_sheet(wb, ws, "Attendance");
 
     // Generate and send file
     const fileBuffer = XLSX.write(wb, { bookType: "xlsx", type: "buffer" });
 
     res.setHeader(
       "Content-Disposition",
-      `attachment; filename=TEAM_PUNJAB_Attendance_${startDate}_to_${endDate}.xlsx`
+      `attachment; filename=Attendance_${startDate}_to_${endDate}.xlsx`
     );
     res.setHeader(
       "Content-Type",
@@ -2222,10 +2225,10 @@ const exportAttendance = async (req, res) => {
       success: false,
       message:
         "Sorry, something went wrong while exporting attendance. Please try again later or contact support.",
+      // error: error.message,
     });
   }
 };
-
 const markLeave = async (req, res) => {
   try {
     if (!req.user?.id) {
