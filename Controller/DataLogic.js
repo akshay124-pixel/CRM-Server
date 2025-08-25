@@ -2063,13 +2063,10 @@ const exportAttendance = async (req, res) => {
       date: { $gte: start, $lte: end },
     };
 
-    // Apply user filter if selectedUserId is provided
     if (selectedUserId) {
       if (user.role === "superadmin") {
-        // Superadmin can filter by any user
         query.user = selectedUserId;
       } else if (user.role === "admin") {
-        // Admin can only filter by their team members or themselves
         const teamMembers = await User.find({
           assignedAdmins: req.user.id,
         }).select("_id");
@@ -2088,7 +2085,6 @@ const exportAttendance = async (req, res) => {
           });
         }
       } else {
-        // Regular users can only filter by themselves
         if (selectedUserId === req.user.id) {
           query.user = selectedUserId;
         } else {
@@ -2099,7 +2095,6 @@ const exportAttendance = async (req, res) => {
         }
       }
     } else {
-      // If no selectedUserId, apply role-based restrictions
       if (user.role === "superadmin") {
         // No restrictions for superadmin
       } else if (user.role === "admin") {
@@ -2113,12 +2108,10 @@ const exportAttendance = async (req, res) => {
       }
     }
 
-    console.log(`Exporting attendance with query: ${JSON.stringify(query)}`);
-
     // Fetch attendance records
     const attendance = await Attendance.find(query)
       .populate("user", "username")
-      .sort({ date: -1, _id: -1 }) // Preserve duplicates with consistent sorting
+      .sort({ date: -1, _id: -1 })
       .lean();
 
     if (!attendance.length) {
@@ -2128,91 +2121,95 @@ const exportAttendance = async (req, res) => {
       });
     }
 
-    // Function to format date and time in IST
-    const formatInIST = (date) => {
-      if (!date || isNaN(new Date(date).getTime())) {
-        console.warn(`Invalid date: ${date}`);
-        return null;
+    // Prepare date headers
+    const dates = [];
+    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+      dates.push(new Date(d));
+    }
+
+    // Pivot attendance data
+    const userIds = [
+      ...new Set(attendance.map((a) => a.user?._id).filter((id) => id)),
+    ];
+    const users = await User.find({ _id: { $in: userIds } }).select("username");
+    const attendanceData = {};
+    attendance.forEach((record) => {
+      if (record.user && record.user._id) {
+        const dateKey = record.date.toISOString().split("T")[0];
+        if (!attendanceData[record.user._id]) {
+          attendanceData[record.user._id] = {};
+        }
+        attendanceData[record.user._id][dateKey] = record.status || "NA";
       }
-      return new Date(date);
-    };
+    });
 
-    // Format attendance data for Excel
-    const formattedAttendance = attendance.map((record) => {
-      const dateIST = formatInIST(record.date);
-      const checkInIST = record.checkIn ? formatInIST(record.checkIn) : null;
-      const checkOutIST = record.checkOut ? formatInIST(record.checkOut) : null;
-
-      // Log raw and formatted times for debugging
-      console.log(`Record ID: ${record._id}`);
-      console.log(
-        `Raw date: ${record.date}, Formatted date: ${dateIST?.toISOString()}`
-      );
-      console.log(
-        `Raw checkIn: ${
-          record.checkIn
-        }, Formatted checkIn: ${checkInIST?.toISOString()}`
-      );
-      console.log(
-        `Raw checkOut: ${
-          record.checkOut
-        }, Formatted checkOut: ${checkOutIST?.toISOString()}`
-      );
-
-      return {
-        Date: dateIST
-          ? dateIST.toLocaleDateString("en-GB", {
-              day: "2-digit",
-              month: "2-digit",
-              year: "numeric",
-              timeZone: "Asia/Kolkata", // Explicitly set to IST
-            }) // Formats as DD/MM/YYYY
-          : "N/A",
-        Employee: record.user?.username || "Unknown",
-        Check_In: checkInIST
-          ? checkInIST.toLocaleTimeString("en-US", {
-              hour12: true,
-              hour: "numeric",
-              minute: "2-digit",
-              second: "2-digit",
-              timeZone: "Asia/Kolkata", // Explicitly set to IST
-            })
-          : "N/A",
-        Check_Out: checkOutIST
-          ? checkOutIST.toLocaleTimeString("en-US", {
-              hour12: true,
-              hour: "numeric",
-              minute: "2-digit",
-              second: "2-digit",
-              timeZone: "Asia/Kolkata", // Explicitly set to IST
-            })
-          : "N/A",
-        Status: record.status || "N/A",
-        Remarks: record.remarks || "N/A",
-      };
+    // Create worksheet data
+    const wsData = [
+      [
+        "No",
+        "Name",
+        ...dates.map((d) =>
+          d.toLocaleDateString("en-GB", { day: "2-digit", month: "short" })
+        ),
+      ],
+    ];
+    users.forEach((user, index) => {
+      const row = [index + 1, user.username];
+      dates.forEach((date) => {
+        const dateKey = date.toISOString().split("T")[0];
+        const status = attendanceData[user._id]?.[dateKey] || "NA";
+        row.push(status);
+      });
+      wsData.push(row);
     });
 
     // Create Excel worksheet
-    const ws = XLSX.utils.json_to_sheet(formattedAttendance);
+    const ws = XLSX.utils.aoa_to_sheet(wsData);
+
+    // Apply conditional formatting
+    const range = XLSX.utils.decode_range(ws["!ref"]);
+    for (let row = 1; row <= range.e.r; row++) {
+      for (let col = 2; col <= range.e.c; col++) {
+        const cellAddress = XLSX.utils.encode_cell({ r: row, c: col });
+        if (!ws[cellAddress]) continue;
+        const status = ws[cellAddress].v;
+        if (status === "NA") {
+          ws[cellAddress].s = { fill: { fgColor: { rgb: "FFF2CC" } } }; // Light orange
+        } else if (status === "L") {
+          ws[cellAddress].s = { fill: { fgColor: { rgb: "F4B084" } } }; // Orange
+        }
+      }
+    }
+    // Highlight Sundays
+    dates.forEach((date, colIdx) => {
+      if (date.getDay() === 0) {
+        const col = colIdx + 2; // Offset by 2 (No and Name columns)
+        for (let row = 1; row <= range.e.r; row++) {
+          const cellAddress = XLSX.utils.encode_cell({ r: row, c: col });
+          if (ws[cellAddress]) {
+            ws[cellAddress].s = { fill: { fgColor: { rgb: "C6EFCE" } } }; // Green
+          }
+        }
+      }
+    });
+
+    // Set column widths
     ws["!cols"] = [
-      { wch: 15 }, // Date
-      { wch: 20 }, // Employee
-      { wch: 15 }, // Check_In
-      { wch: 15 }, // Check_Out
-      { wch: 10 }, // Status
-      { wch: 30 }, // Remarks
+      { wch: 5 }, // No
+      { wch: 20 }, // Name
+      ...dates.map(() => ({ wch: 10 })), // Dates
     ];
 
     // Create Excel workbook
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Attendance");
+    XLSX.utils.book_append_sheet(wb, ws, "TEAM-PUNJAB");
 
     // Generate and send file
     const fileBuffer = XLSX.write(wb, { bookType: "xlsx", type: "buffer" });
 
     res.setHeader(
       "Content-Disposition",
-      `attachment; filename=Attendance_${startDate}_to_${endDate}.xlsx`
+      `attachment; filename=TEAM_PUNJAB_Attendance_${startDate}_to_${endDate}.xlsx`
     );
     res.setHeader(
       "Content-Type",
@@ -2225,11 +2222,92 @@ const exportAttendance = async (req, res) => {
       success: false,
       message:
         "Sorry, something went wrong while exporting attendance. Please try again later or contact support.",
-      // error: error.message,
+    });
+  }
+};
+
+const markLeave = async (req, res) => {
+  try {
+    if (!req.user?.id) {
+      return res.status(401).json({
+        success: false,
+        message: "You need to be logged in to mark leave.",
+      });
+    }
+
+    const user = await User.findById(req.user.id);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found. Please contact support.",
+      });
+    }
+
+    const today = new Date();
+    today.setUTCHours(0, 0, 0, 0);
+
+    const existingAttendance = await Attendance.findOne({
+      user: req.user.id,
+      date: {
+        $gte: today,
+        $lt: new Date(today.getTime() + 24 * 60 * 60 * 1000),
+      },
+    });
+
+    if (existingAttendance) {
+      return res.status(400).json({
+        success: false,
+        message: "Attendance already marked for today.",
+      });
+    }
+
+    const { remarks } = req.body;
+
+    const attendance = new Attendance({
+      user: req.user.id,
+      date: today,
+      remarks: remarks?.trim() || null,
+      status: "Leave",
+    });
+
+    await attendance.save();
+
+    await createNotification(
+      req,
+      req.user.id,
+      `Marked leave on ${new Date().toISOString()}`,
+      null
+    );
+
+    const populatedAttendance = await Attendance.findById(attendance._id)
+      .populate("user", "username")
+      .lean();
+
+    res.status(201).json({
+      success: true,
+      message: "Leave marked successfully",
+      data: {
+        ...populatedAttendance,
+        date: new Date(populatedAttendance.date).toISOString(),
+        checkIn: populatedAttendance.checkIn
+          ? new Date(populatedAttendance.checkIn).toISOString()
+          : null,
+        checkOut: populatedAttendance.checkOut
+          ? new Date(populatedAttendance.checkOut).toISOString()
+          : null,
+      },
+    });
+  } catch (error) {
+    console.error("Mark leave error:", error);
+    res.status(500).json({
+      success: false,
+      message:
+        "Oops! We couldn't mark your leave at the moment. Please try again shortly, or contact support if the problem persists.",
     });
   }
 };
 module.exports = {
+  markLeave,
   bulkUploadStocks,
   getUsersForTagging,
   fetchAllUsers,
