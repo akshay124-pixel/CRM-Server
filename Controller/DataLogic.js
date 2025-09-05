@@ -431,6 +431,7 @@ const editEntry = async (req, res) => {
       thirdPersonMeet,
       fourthPersonMeet,
       assignedTo,
+      createdAt,
     } = req.body;
 
     if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
@@ -618,6 +619,9 @@ const editEntry = async (req, res) => {
         fourthPersonMeet: fourthPersonMeet.trim(),
       }),
       ...(assignedTo !== undefined && { assignedTo: validatedAssignedTo }),
+       ...(createdAt !== undefined && {
+        createdAt: createdAt ? new Date(createdAt) : null,
+      }),
       updatedAt: new Date(),
     });
 
