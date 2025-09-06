@@ -139,16 +139,17 @@ const DataentryLogic = async (req, res) => {
     } = req.body;
 
     const numericEstimatedValue = estimatedValue ? Number(estimatedValue) : 0;
-
     // Validate products
     if (products && Array.isArray(products) && products.length > 0) {
       for (const product of products) {
+        // Allow "No Requirement" with quantity 0
         if (
-          !product.name ||
-          !product.specification ||
-          !product.size ||
-          !product.quantity ||
-          product.quantity < 1
+          product.name !== "No Requirement" &&
+          (!product.name ||
+            !product.specification ||
+            !product.size ||
+            !product.quantity ||
+            product.quantity < 1)
         ) {
           return res.status(400).json({
             success: false,
